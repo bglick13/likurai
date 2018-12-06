@@ -42,7 +42,7 @@ class Model:
                 self.activations.append(layer(self.activations[-1]))
             self.layers.append(layer)
 
-    def compile(self):
+    def compile(self, dist: str, **kwargs):
         """
         Create the likelihood distribution with observed variable
 
@@ -51,8 +51,8 @@ class Model:
         :return:
         """
         with self.model:
-            likelihood = pm.Normal('likelihood', mu=self.activations[-1], sd=pm.HalfCauchy('sigma', 5.),
-                                   observed=self.y, total_size=len(self.x.get_value()))
+            likelihood = getattr(pm, dist)('likelihood', mu=self.activations[-1], sd=pm.HalfCauchy('sigma', 2.),
+                                   observed=self.y, total_size=len(self.x.get_value()), **kwargs)
         self.compiled = True
 
     def fit(self, X, y):

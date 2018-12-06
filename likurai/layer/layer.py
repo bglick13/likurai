@@ -57,13 +57,13 @@ class BayesianDenseLayer(Layer):
 
     def __call__(self, *args, **kwargs):
         input = concatenate(args, axis=1)
-        if self.activation is None:
-            act = pm.math.dot(input, self.weights)
-        else:
-            act = self.activation(pm.math.dot(input, self.weights))
+        act = pm.math.dot(input, self.weights)
         if self.use_bias:
             act = act + self.bias
-        return act
+        if self.activation is None:
+            return act
+        else:
+            return self.activation(act)
 
 
 
