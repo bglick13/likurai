@@ -3,10 +3,10 @@ Defines the interface for a Model. Ideally, everything in this API will follow t
 to scikit-learn's
 """
 import pickle
-from . import shared
-from . import np
-from . import pm
-from . import Layer
+import numpy as np
+import pymc3 as pm
+from theano import shared
+from ..layer import Layer
 
 
 class Model:
@@ -39,23 +39,21 @@ class Model:
             if len(self.layers) == 0:
                 self.activations.append(layer(self.x))
             else:
-                self.activations.append(layer(self.layers[-1]))
+                self.activations.append(layer(self.activations[-1]))
             self.layers.append(layer)
 
-    # def compile(self, sd, total_size: int):
-    #     """
-    #     Build the computation tree and create the likelihood distribution with observed variable
-    #
-    #     :param sd: A pymc3 distribution representing model variance
-    #     :param total_size: The total number of observations. Important for minibatch training
-    #     :return:
-    #     """
-    #     with self.model:
-    #         # # Build the activations
-    #         # for i, l in enumerate(self.layers):
-    #         #     self.activations.append(l(self.build_layer_input(i)))
-    #         likelihood = pm.Normal('likelihood', mu=self.activations[-1], sd=sd, observed=self.y, total_size=total_size)
-    #     self.compiled = True
+    def compile(self):
+        """
+        Create the likelihood distribution with observed variable
+
+        :param sd: A pymc3 distribution representing model variance
+        :param total_size: The total number of observations. Important for minibatch training
+        :return:
+        """
+        with self.model:
+            likelihood = pm.Normal('likelihood', mu=self.activations[-1], sd=pm.HalfCauchy('sigma', 5.),
+                                   observed=self.y, total_size=len(self.x.get_value()))
+        self.compiled = True
 
     def fit(self, X, y):
         pass

@@ -1,8 +1,15 @@
 from .. import floatX
 
-from . import pm
-from . import retrieve_distribution, retrieve_activation
-from . import concatenate
+import pymc3 as pm
+from theano.tensor import concatenate
+import theano.tensor.nnet as nn
+
+def retrieve_distribution(dist):
+    return getattr(pm, dist)
+
+
+def retrieve_activation(act):
+    return getattr(nn, act)
 
 
 class Layer:
@@ -30,7 +37,7 @@ class BayesianDenseLayer(Layer):
         """
         super().__init__()
 
-        if 'shape' not in kwargs['weight_kwargs'] and input_size is None or output_size is None:
+        if 'shape' not in kwargs['weight_kwargs'] and (input_size is None or output_size is None):
             raise ValueError("Must either provide shape as a kwarg or set input and output size")
         if 'shape' not in kwargs and input_size is not None and output_size is not None:
             kwargs['weight_kwargs']['shape'] = (input_size, output_size)
@@ -39,10 +46,14 @@ class BayesianDenseLayer(Layer):
         self.use_bias = use_bias
         self.dist = retrieve_distribution(type)
         self.weights = self.dist('{}_weights'.format(name), **kwargs['weight_kwargs'])
-        self.bias = self.dist('{}_bias'.format(name), **kwargs['bias_kwargs'])
+        if self.use_bias:
+            self.bias = self.dist('{}_bias'.format(name), **kwargs['bias_kwargs'])
 
         if isinstance(activation, str):
-            self.activation = retrieve_activation(activation)
+            if activation == 'linear' or activation is None:
+                self.activation = None
+            else:
+                self.activation = retrieve_activation(activation)
 
     def __call__(self, *args, **kwargs):
         input = concatenate(args, axis=1)
