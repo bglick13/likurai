@@ -53,7 +53,9 @@ if __name__ == '__main__':
     bnn.add_layer(output_layer)
     # Before we can use our model, we have to compile it. This adds the likelihood distribution that the model params
     # are conditioned on
-    bnn.compile('Normal')
+    with bnn.model:
+        likelihood = pm.Normal('likelihood', mu=bnn.activations[-1], sd=pm.HalfCauchy('sigma', 2.),
+                                       observed=bnn.y, total_size=len(bnn.x.get_value()))
 
     # The model itself follows the scikit-learn interface for training/predicting
     bnn.fit(X_train, y, epochs=200, method='nuts', **{'tune': 5000, 'chains': 2})
