@@ -58,7 +58,7 @@ if __name__ == '__main__':
                                        observed=bnn.y, total_size=len(bnn.x.get_value()))
 
     # The model itself follows the scikit-learn interface for training/predicting
-    bnn.fit(X_train, y, epochs=200, method='nuts', **{'tune': 5000, 'chains': 2})
+    bnn.fit(X_train, y, epochs=1000, method='nuts', **{'tune': 5000, 'chains': 2})
     pred = bnn.predict(X_test, n_samples=1000)
     print(pred)
     # However, for simplicity's sake, we can also tell the model to just give us point-estimate predictions
