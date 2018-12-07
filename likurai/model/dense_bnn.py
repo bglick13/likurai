@@ -34,7 +34,13 @@ class BayesianNeuralNetwork(Model):
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False):
         self.x.set_value(x)
-        self.y.set_value(np.zeros((np.array(x).shape[0], self.y.get_value().shape[1])).astype(floatX))
+        try:
+            # For classification tasks
+            self.y.set_value(np.zeros((np.array(x).shape[0], self.y.get_value().shape[1])).astype(floatX))
+        except IndexError:
+            # For regression tasks
+            self.y.set_value(np.zeros(np.array(x).shape[0]).astype(floatX))
+
         with self.model:
             ppc = pm.sample_ppc(self.trace, samples=n_samples, progressbar=progressbar)
         if point_estimate:
