@@ -7,13 +7,15 @@ import numpy as np
 import pymc3 as pm
 from theano import shared
 from ..layer import Layer
+import theano
+floatX = theano.config.floatX
 
 
 class Model:
     def __init__(self):
         # Model inputs/targets
-        self.x = shared(np.zeros((1, 1)))
-        self.y = shared(np.array([]))
+        self.x = shared(np.zeros((1, 1)).astype(floatX))
+        self.y = shared(np.array([]).astype(floatX))
 
         # Other model variables
         self.layers = []

@@ -5,7 +5,8 @@ Densely connected Bayesian Neural Network
 import numpy as np
 import pymc3 as pm
 from . import Model
-
+import theano
+floatX = theano.config.floatX
 
 class BayesianNeuralNetwork(Model):
     def __init__(self):
@@ -18,8 +19,8 @@ class BayesianNeuralNetwork(Model):
                 # self.y.set_value(y)
                 self.trace = pm.sample(epochs, init='advi', **sample_kwargs)
             else:
-                mini_x = pm.Minibatch(x, batch_size=batch_size)
-                mini_y = pm.Minibatch(y, batch_size=batch_size)
+                mini_x = pm.Minibatch(x, batch_size=batch_size, dtype='float32')
+                mini_y = pm.Minibatch(y, batch_size=batch_size, dtype='float32')
 
                 if method == 'advi':
                     inference = pm.ADVI()
@@ -31,8 +32,8 @@ class BayesianNeuralNetwork(Model):
                 self.approx = approx
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False):
-        self.x.set_value(x)
-        self.y.set_value(np.zeros(np.array(x).shape[0]))
+        self.x.set_value(x.astype(floatX))
+        self.y.set_value(np.zeros(np.array(x).shape[0]).astype(floatX))
         with self.model:
             ppc = pm.sample_ppc(self.trace, samples=n_samples, progressbar=progressbar)
         if point_estimate:

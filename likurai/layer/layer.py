@@ -23,12 +23,12 @@ class Layer:
 
 
 class BayesianDenseLayer(Layer):
-    def __init__(self, name, type, input_size=None, output_size=None, activation: str or function = None, use_bias=True,
-                 **kwargs):
+    def __init__(self, name, weight_dist, input_size=None, output_size=None, activation: str or function = None,
+                 use_bias=True, bias_dist=None, **kwargs):
         """
         Initialize a basic dense layer in a Bayesian framework
         :param name: Name of the layer
-        :param type: Type of distribution. Currently only supports ('normal', 'bernoulli')
+        :param weight_dist: Type of distribution. Currently only supports ('normal', 'bernoulli')
         :param input_size: Input size of the layer
         :param output_size: Number of output neurons
         :param activation: Layer activation. Currently only supports ('relu', 'sigmoid', 'linear', 'softmax')
@@ -44,10 +44,14 @@ class BayesianDenseLayer(Layer):
             kwargs['bias_kwargs']['shape'] = output_size
 
         self.use_bias = use_bias
-        self.dist = retrieve_distribution(type)
-        self.weights = self.dist('{}_weights'.format(name), **kwargs['weight_kwargs'])
+        self.weight_dist = retrieve_distribution(weight_dist)
+        if bias_dist is None:
+            self.bias_dist = retrieve_distribution(weight_dist)
+        else:
+            self.bias_dist = retrieve_distribution(bias_dist)
+        self.weights = self.weight_dist('{}_weights'.format(name), **kwargs['weight_kwargs'])
         if self.use_bias:
-            self.bias = self.dist('{}_bias'.format(name), **kwargs['bias_kwargs'])
+            self.bias = self.bias_dist('{}_bias'.format(name), **kwargs['bias_kwargs'])
 
         if isinstance(activation, str):
             if activation == 'linear' or activation is None:
