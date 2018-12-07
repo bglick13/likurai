@@ -8,6 +8,7 @@ from . import Model
 import theano
 floatX = theano.config.floatX
 
+
 class BayesianNeuralNetwork(Model):
     def __init__(self):
         super().__init__()
@@ -19,8 +20,8 @@ class BayesianNeuralNetwork(Model):
                 # self.y.set_value(y)
                 self.trace = pm.sample(epochs, init='advi', **sample_kwargs)
             else:
-                mini_x = pm.Minibatch(x, batch_size=batch_size, dtype='float32')
-                mini_y = pm.Minibatch(y, batch_size=batch_size, dtype='float32')
+                mini_x = pm.Minibatch(x, batch_size=batch_size, dtype=floatX)
+                mini_y = pm.Minibatch(y, batch_size=batch_size, dtype=floatX)
 
                 if method == 'advi':
                     inference = pm.ADVI()
@@ -32,8 +33,8 @@ class BayesianNeuralNetwork(Model):
                 self.approx = approx
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False):
-        self.x.set_value(x.astype(floatX))
-        self.y.set_value(np.zeros(np.array(x).shape[0]).astype(floatX))
+        self.x.set_value(x)
+        self.y.set_value(np.zeros((np.array(x).shape[0], self.y.get_value().shape[1])).astype(floatX))
         with self.model:
             ppc = pm.sample_ppc(self.trace, samples=n_samples, progressbar=progressbar)
         if point_estimate:

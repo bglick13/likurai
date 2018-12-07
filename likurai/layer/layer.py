@@ -4,6 +4,7 @@ import pymc3 as pm
 from theano.tensor import concatenate
 import theano.tensor.nnet as nn
 
+
 def retrieve_distribution(dist):
     return getattr(pm, dist)
 
