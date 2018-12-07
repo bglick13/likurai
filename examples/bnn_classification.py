@@ -1,7 +1,7 @@
 from likurai.model import BayesianNeuralNetwork
 from likurai.layer import BayesianDenseLayer
 from sklearn.datasets import load_iris
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, log_loss
 from theano import shared
 from sklearn import ensemble
 from sklearn.preprocessing import OneHotEncoder
@@ -83,8 +83,9 @@ if __name__ == '__main__':
     print(pred.shape)
     # However, for simplicity's sake, we can also tell the model to just give us point-estimate predictions
     point_pred = bnn.predict(X_test, n_samples=1000, point_estimate=True)
-    point_pred = point_pred.argmax(axis=0)
+    point_pred = point_pred
     print(point_pred)
+    print(point_pred.shape)
     # Let's just make a simple baseline using a scikit model. Eventually I'll use a comparable NN
     params = {'n_estimators': 500, 'max_depth': 4, 'min_samples_split': 2, 'learning_rate': 0.01}
     clf = ensemble.GradientBoostingClassifier(**params)
@@ -93,5 +94,9 @@ if __name__ == '__main__':
     clf_pred = clf.predict(X_test)
     print(np.unique(y_test))
 
-    print('BNN:\n{}'.format(classification_report(y_test, point_pred)))
-    print('Baseline:\n{}'.format(classification_report(y_test, point_pred)))
+    print('BNN:\n{}'.format(classification_report(y_test, point_pred.argmax(axis=0))))
+    print('Baseline:\n{}'.format(classification_report(y_test, clf_pred)))
+
+    print("Log-Loss BNN: {}".format(log_loss(y_test, point_pred.argmax(axis=0))))
+    print("Log-Loss BNN (probabilistic): {}".format(log_loss(y_test, point_pred.T)))
+    print("Log-Loss Baseline: {}".format(log_loss(y_test, clf_pred)))
