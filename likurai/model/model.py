@@ -44,17 +44,33 @@ class Model:
                 self.activations.append(layer(self.activations[-1]))
             self.layers.append(layer)
 
-    def compile(self, dist: str, **kwargs):
+    def compile(self, dist: str, connected_param, **kwargs):
         """
-        Create the likelihood distribution with observed variable
+        Build the likelihood distribution the model will be conditioned on
+        :param dist: the type of distribution to use
+        :param connected_param: Which of the model params will be connected to the output layer
+        :param kwargs: dict of dict describing the rest of the distribution parameters
 
-        :param sd: A pymc3 distribution representing model variance
-        :param total_size: The total number of observations. Important for minibatch training
+        e.g.,
+        ```
+        bnn.compile('Normal', 'mu', {'sd': {'dist': 'HalfCauchy', 'name': 'sigma', 'beta': 5.}})
+        ```
         :return:
         """
+        dist = getattr(pm, dist)
+
         with self.model:
-            likelihood = getattr(pm, dist)('likelihood', mu=self.activations[-1], sd=pm.HalfCauchy('sigma', 2.),
-                                   observed=self.y, total_size=len(self.x.get_value()), **kwargs)
+            _params = {connected_param: self.activations[-1]}
+            jitter = kwargs.pop('jitter')
+            _params[connected_param] += jitter
+            for key, value in kwargs.items():
+                if isinstance(value, dict):
+                    _dist = getattr(pm, value.pop('dist'))
+                    _params[key] = _dist(**value)
+                elif isinstance(value, [float, int]):
+                    _params[key] = value
+
+            likelihood = dist('likelihood', observed=self.y, total_size=len(self.x.get_value()), **_params)
         self.compiled = True
 
     def fit(self, X, y):

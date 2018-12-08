@@ -36,13 +36,13 @@ if __name__ == '__main__':
     with bnn.model:
         input_layer = BayesianDenseLayer('input', weight_dist='Normal',
                                          input_size=n_features, output_size=HIDDEN_SIZE, activation='relu',
-                                         **{'weight_kwargs': {'mu': 0., 'sd': 1.},
-                                            'bias_kwargs': {'mu': 0., 'sd': 1.}})
+                                         **{'weight_kwargs': {'mu': 0., 'sd': .5},
+                                            'bias_kwargs': {'mu': 0., 'sd': .5}})
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
         hidden_layer_1 = BayesianDenseLayer('hidden1', weight_dist='Normal', activation='relu',
-                                            **{'weight_kwargs': {'mu': 0., 'sd': 1., 'shape': (HIDDEN_SIZE, HIDDEN_SIZE)},
-                                             'bias_kwargs': {'mu': 0., 'sd': 1., 'shape': HIDDEN_SIZE}})
+                                            **{'weight_kwargs': {'mu': 0., 'sd': .5, 'shape': (HIDDEN_SIZE, HIDDEN_SIZE)},
+                                             'bias_kwargs': {'mu': 0., 'sd': .5, 'shape': HIDDEN_SIZE}})
         # #
         # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
         # hidden_layer_2 = BayesianDenseLayer('hidden2', weight_dist='Normal', activation='relu',
@@ -57,8 +57,8 @@ if __name__ == '__main__':
 
         # Create our output layer. We tell it not to use a bias.
         output_layer = BayesianDenseLayer('output', weight_dist='Normal', activation='relu',
-                                          **{'weight_kwargs': {'mu': 0., 'sd': 1., 'shape': (HIDDEN_SIZE, )},
-                                             'bias_kwargs': {'mu': 0., 'sd': 1., 'shape': 1}})
+                                          **{'weight_kwargs': {'mu': 0., 'sd': .5, 'shape': (HIDDEN_SIZE, )},
+                                             'bias_kwargs': {'mu': 0., 'sd': .5, 'shape': 1}})
 
     bnn.add_layer(input_layer)
     bnn.add_layer(hidden_layer_1)
@@ -67,9 +67,10 @@ if __name__ == '__main__':
     bnn.add_layer(output_layer)
     # Before we can use our model, we have to compile it. This adds the likelihood distribution that the model params
     # are conditioned on
-    with bnn.model:
-        likelihood = pm.Gamma('likelihood', alpha=bnn.activations[-1] + 1.e-7, beta=pm.HalfCauchy('beta', 3.),
-                               observed=bnn.y, total_size=len(bnn.x.get_value()))
+    bnn.compile('Gamma', 'alpha', **{'jitter': 1e-7, 'beta': {'dist': 'HalfCauchy', 'name': 'beta', 'beta': 3.}})
+    # with bnn.model:
+    #     likelihood = pm.Gamma('likelihood', alpha=bnn.activations[-1] + 1.e-7, beta=pm.HalfCauchy('beta', 3.),
+    #                            observed=bnn.y, total_size=len(bnn.x.get_value()))
 
     # The model itself follows the scikit-learn interface for training/predicting
     # bnn.fit(X_train, y_train, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
