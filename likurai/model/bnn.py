@@ -39,7 +39,7 @@ class BayesianNeuralNetwork(Model):
             self.y.set_value(np.zeros((np.array(x).shape[0], self.y.get_value().shape[1])).astype(floatX))
         except IndexError:
             # For regression tasks
-            self.y.set_value(np.zeros(np.array(x).shape[0]).astype(floatX))
+            self.y.set_value(np.zeros((np.array(x).shape[0], 1)).astype(floatX))
 
         with self.model:
             ppc = pm.sample_ppc(self.trace, samples=n_samples, progressbar=progressbar)

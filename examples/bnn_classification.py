@@ -37,42 +37,22 @@ if __name__ == '__main__':
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianDenseLayer('input', weight_dist='Normal',
-                                         input_size=n_features, output_size=HIDDEN_SIZE, activation='relu',
-                                         **{'weight_kwargs': {'mu': 0., 'sd': 1.},
-                                            'bias_kwargs': {'mu': 0., 'sd': 1.}})
+        input_layer = BayesianDenseLayer('input', weight_dist='Normal', shape=(n_features, HIDDEN_SIZE),
+                                         activation='relu')
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianDenseLayer('hidden1', weight_dist='Normal', activation='relu',
-                                            **{'weight_kwargs': {'mu': 0., 'sd': 1., 'shape': (HIDDEN_SIZE, HIDDEN_SIZE)},
-                                             'bias_kwargs': {'mu': 0., 'sd': 1., 'shape': HIDDEN_SIZE}})
-        # #
-        # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        # hidden_layer_2 = BayesianDenseLayer('hidden2', weight_dist='Normal', activation='relu',
-        #                                     **{'weight_kwargs': {'mu': 0., 'sd': 1.,
-        #                                                          'shape': (HIDDEN_SIZE, HIDDEN_SIZE)},
-        #                                        'bias_kwargs': {'mu': 0., 'sd': 1., 'shape': HIDDEN_SIZE}})
-        #
-        # hidden_layer_3 = BayesianDenseLayer('hidden3', type='Normal', activation='relu',
-        #                                     **{'weight_kwargs': {'mu': 0., 'sd': 1.,
-        #                                                          'shape': (HIDDEN_SIZE, HIDDEN_SIZE)},
-        #                                        'bias_kwargs': {'mu': 0., 'sd': 1., 'shape': HIDDEN_SIZE}})
+        hidden_layer_1 = BayesianDenseLayer('hidden1', weight_dist='Normal', activation='relu', shape=(HIDDEN_SIZE, HIDDEN_SIZE))
 
         # Create our output layer. We tell it not to use a bias.
-        output_layer = BayesianDenseLayer('output', weight_dist='Normal', activation='softmax',
-                                          **{'weight_kwargs': {'mu': 0., 'sd': 1., 'shape': (HIDDEN_SIZE, n_classes)},
-                                             'bias_kwargs': {'mu': 0., 'sd': 1., 'shape': n_classes}})
+        output_layer = BayesianDenseLayer('output', weight_dist='Normal', activation='softmax', shape=(HIDDEN_SIZE, n_classes))
 
     bnn.add_layer(input_layer)
     bnn.add_layer(hidden_layer_1)
-    # bnn.add_layer(hidden_layer_2)
-    # bnn.add_layer(hidden_layer_3)
     bnn.add_layer(output_layer)
+
     # Before we can use our model, we have to compile it. This adds the likelihood distribution that the model params
     # are conditioned on
-    with bnn.model:
-        likelihood = pm.Multinomial('likelihood', p=bnn.activations[-1], n=1,
-                                    observed=bnn.y, total_size=len(bnn.x.get_value()))
+    bnn.compile('Multinomial', 'p', **{'n': 1})
 
     # The model itself follows the scikit-learn interface for training/predicting
     bnn.fit(X_train, y, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})

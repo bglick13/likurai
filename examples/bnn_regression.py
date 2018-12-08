@@ -7,6 +7,7 @@ from sklearn import ensemble
 import pymc3 as pm
 import matplotlib.pyplot as plt
 import theano
+from theano import shared
 floatX = theano.config.floatX
 
 if __name__ == '__main__':
@@ -17,7 +18,7 @@ if __name__ == '__main__':
     boston = load_boston()
     X, y = boston['data'], boston['target']
     X = X.astype(floatX)
-    y = y.astype(floatX)
+    y = y.astype(floatX).reshape(-1, 1)
 
     # We'll arbitrarily leave out the last 100 data points as our test set
     X_train, y_train = X[:-100, :], y[:-100]
@@ -30,47 +31,25 @@ if __name__ == '__main__':
     # Initialize a model object
     bnn = BayesianNeuralNetwork()
     bnn.x.set_value(X_train.astype(floatX))
-    bnn.y.set_value(y_train.astype(floatX))
+    bnn.y = shared(y_train.astype(floatX))
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianDenseLayer('input', weight_dist='Normal',
-                                         input_size=n_features, output_size=HIDDEN_SIZE, activation='relu',
-                                         **{'weight_kwargs': {'mu': 0., 'sd': .5},
-                                            'bias_kwargs': {'mu': 0., 'sd': .5}})
+        input_layer = BayesianDenseLayer('input', input_size=n_features, output_size=HIDDEN_SIZE, activation='relu')
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianDenseLayer('hidden1', weight_dist='Normal', activation='relu',
-                                            **{'weight_kwargs': {'mu': 0., 'sd': .5, 'shape': (HIDDEN_SIZE, HIDDEN_SIZE)},
-                                             'bias_kwargs': {'mu': 0., 'sd': .5, 'shape': HIDDEN_SIZE}})
-        # #
-        # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        # hidden_layer_2 = BayesianDenseLayer('hidden2', weight_dist='Normal', activation='relu',
-        #                                     **{'weight_kwargs': {'mu': 0., 'sd': 1.,
-        #                                                          'shape': (HIDDEN_SIZE, HIDDEN_SIZE)},
-        #                                        'bias_kwargs': {'mu': 0., 'sd': 1., 'shape': HIDDEN_SIZE}})
-        #
-        # hidden_layer_3 = BayesianDenseLayer('hidden3', type='Normal', activation='relu',
-        #                                     **{'weight_kwargs': {'mu': 0., 'sd': 1.,
-        #                                                          'shape': (HIDDEN_SIZE, HIDDEN_SIZE)},
-        #                                        'bias_kwargs': {'mu': 0., 'sd': 1., 'shape': HIDDEN_SIZE}})
+        hidden_layer_1 = BayesianDenseLayer('hidden1', activation='relu', shape=(HIDDEN_SIZE, HIDDEN_SIZE))
 
-        # Create our output layer. We tell it not to use a bias.
-        output_layer = BayesianDenseLayer('output', weight_dist='Normal', activation='relu',
-                                          **{'weight_kwargs': {'mu': 0., 'sd': .5, 'shape': (HIDDEN_SIZE, )},
-                                             'bias_kwargs': {'mu': 0., 'sd': .5, 'shape': 1}})
+        # Create our output layer
+        output_layer = BayesianDenseLayer('output', weight_dist='Normal', activation='relu', shape=(HIDDEN_SIZE, 1))
 
     bnn.add_layer(input_layer)
     bnn.add_layer(hidden_layer_1)
-    # bnn.add_layer(hidden_layer_2)
-    # bnn.add_layer(hidden_layer_3)
     bnn.add_layer(output_layer)
+
     # Before we can use our model, we have to compile it. This adds the likelihood distribution that the model params
     # are conditioned on
     bnn.compile('Gamma', 'alpha', **{'jitter': 1e-7, 'beta': {'dist': 'HalfCauchy', 'name': 'beta', 'beta': 3.}})
-    # with bnn.model:
-    #     likelihood = pm.Gamma('likelihood', alpha=bnn.activations[-1] + 1.e-7, beta=pm.HalfCauchy('beta', 3.),
-    #                            observed=bnn.y, total_size=len(bnn.x.get_value()))
 
     # The model itself follows the scikit-learn interface for training/predicting
     # bnn.fit(X_train, y_train, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
