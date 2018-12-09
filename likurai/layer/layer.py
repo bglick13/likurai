@@ -24,7 +24,7 @@ class Layer:
 
 
 class BayesianDenseLayer(Layer):
-    def __init__(self, name, input_size=None, output_size=None, shape=None, activation: str or function = None, sd=0.5,
+    def __init__(self, name, input_size=None, output_size=None, shape=None, activation: str or function=None, sd=0.5,
                  use_bias=True, **kwargs):
         """
         Initialize a basic dense layer in a Bayesian framework
@@ -66,8 +66,8 @@ class BayesianDenseLayer(Layer):
 
 
 class HierarchicalBayesianDenseLayer(Layer):
-    def __init__(self, name, weight_dist, input_size=None, output_size=None, n_groups=None, activation: str or function = None,
-                 use_bias=True, bias_dist=None, **kwargs):
+    def __init__(self, name, input_size=None, output_size=None, n_groups=None, shape=None, sd=.5,
+                 activation: str or function=None, use_bias=True, **kwargs):
         """
         Initialize a basic dense layer in a Bayesian framework
         :param name: Name of the layer
@@ -80,20 +80,18 @@ class HierarchicalBayesianDenseLayer(Layer):
         """
         super().__init__()
 
-        if 'shape' not in kwargs['weight_kwargs'] and (input_size is None or output_size is None):
-            raise ValueError("Must either provide shape as a kwarg or set input and output size")
-        if 'shape' not in kwargs and input_size is not None and output_size is not None:
-            kwargs['weight_kwargs']['shape'] = (input_size, output_size)
-            kwargs['bias_kwargs']['shape'] = output_size
+        if shape is None and (input_size is None or output_size is None):
+            raise ValueError("Must either provide shape or set input and output size")
+        if shape is None:
+            shape = (input_size, output_size)
 
         self.use_bias = use_bias
         self.n_groups = n_groups
 
-        self.weight_dist = retrieve_distribution(weight_dist)
-        if bias_dist is None:
-            self.bias_dist = retrieve_distribution(weight_dist)
-        else:
-            self.bias_dist = retrieve_distribution(bias_dist)
+        self.weights = pm.Normal('{}_weights'.format(name), mu=0., sd=sd, shape=shape)
+        self.weights_sd = pp
+        if self.use_bias:
+            self.bias = pm.Normal('{}_bias'.format(name), mu=0., sd=1., shape=shape[1])
 
         weights_in_grp = pm.Normal('w_in', mu=0., sd=1., shape=(input_size, output_size), testval=init_in)
         weights_in_sd = pm.HalfNormal('w_in_sd', sd=1.)
@@ -101,8 +99,7 @@ class HierarchicalBayesianDenseLayer(Layer):
         weights_in = weights_in_raw * weights_in_sd + weights_in_grp
 
         self.weights_grp = self.weight_dist('{}_weights_grp'.format(name), **kwargs['weight_kwargs'])
-        if self.use_bias:
-            self.bias = self.bias_dist('{}_bias'.format(name), **kwargs['bias_kwargs'])
+
 
         if isinstance(activation, str):
             if activation == 'linear' or activation is None:
