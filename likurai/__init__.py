@@ -1,6 +1,7 @@
 import theano
 floatX = theano.config.floatX
-from .layer import BayesianDenseLayer
+shared = theano.shared
+from .layer import BayesianDense
 from .model import BayesianNeuralNetwork
 
-__all__ = ['BayesianDenseLayer', 'BayesianNeuralNetwork', 'floatX']
+__all__ = ['BayesianDense', 'BayesianNeuralNetwork', 'floatX', 'shared']

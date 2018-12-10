@@ -22,7 +22,7 @@ class Layer:
         pass
 
 
-class LikelihoodLayer(Layer):
+class Likelihood(Layer):
     def __init__(self, dist: str, connected_param, **kwargs):
         """
         Creates rhe likelihood distribution that the model is conditioned on
@@ -37,7 +37,12 @@ class LikelihoodLayer(Layer):
     def __call__(self, *args, **kwargs):
         input = concatenate(args, axis=1)
         _params = {self.connected_param: input}
-        jitter = kwargs.pop('jitter')
+
+        try:
+            jitter = kwargs.pop('jitter')
+        except KeyError:
+            jitter = 0
+
         _params[self.connected_param] += jitter
         for key, value in kwargs.items():
             if isinstance(value, dict):
@@ -50,7 +55,7 @@ class LikelihoodLayer(Layer):
         likelihood = self.dist('likelihood', observed=observed, total_size=total_size, **_params)
 
 
-class BayesianDenseLayer(Layer):
+class BayesianDense(Layer):
     def __init__(self, name, input_size=None, output_size=None, shape=None, activation: str or function=None, sd=0.5,
                  use_bias=True, **kwargs):
         """
@@ -92,7 +97,7 @@ class BayesianDenseLayer(Layer):
             return self.activation(act)
 
 
-class HierarchicalBayesianDenseLayer(Layer):
+class HierarchicalBayesianDense(Layer):
     def __init__(self, name, input_size=None, output_size=None, n_groups=None, shape=None, sd=.5,
                  activation: str or function=None, use_bias=True, **kwargs):
         """
@@ -139,3 +144,58 @@ class HierarchicalBayesianDenseLayer(Layer):
         else:
             return self.activation(act)
 
+
+class BayesianConv2D(Layer):
+    def __init__(self, name, input_shape, output_size, filter_size, activation=None, use_bias=True, sd=.5):
+        """
+
+        :param name:
+        :param input_shape: The input shape
+        :param output_size: Number of filters to use
+        :param filter_size: filter size (3, 3) is pretty standard
+        :param activation:
+        :param use_bias:
+        :param sd:
+        """
+        super().__init__()
+        self.use_bias = use_bias
+        self.weight_shape = (filter_size[0], filter_size[1], input_shape[-1], output_size)
+        self.weights = pm.Normal('{}_weights'.format(name), mu=0., sd=sd, shape=self.weight_shape)
+
+        if self.use_bias:
+            self.bias = pm.Normal('{}_bias'.format(name), mu=0., sd=1., shape=output_size)
+
+        if isinstance(activation, str):
+            if activation == 'linear' or activation is None:
+                self.activation = None
+            else:
+                self.activation = retrieve_activation(activation)
+
+    def __call__(self, *args, **kwargs):
+        input = concatenate(args, axis=1)
+        act = nn.conv2d(input, self.weights)
+        if self.use_bias:
+            act = act + self.bias
+        if self.activation is None:
+            return act
+        else:
+            return self.activation(act)
+
+
+class MaxPooling2D(Layer):
+    def __init__(self, pooling_size: tuple):
+        super().__init__()
+        self.pooling_size = pooling_size
+
+    def __call__(self, *args, **kwargs):
+        input = concatenate(args, axis=1)
+        return tt.signal.pool.pool_2d(input, self.pooling_size)
+
+
+class Flatten(Layer):
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, *args, **kwargs):
+        input = concatenate(args, axis=1)
+        return input.flatten()

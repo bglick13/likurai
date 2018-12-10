@@ -1,5 +1,5 @@
 from likurai.model import BayesianNeuralNetwork
-from likurai.layer import BayesianDenseLayer
+from likurai.layer import BayesianDense, Likelihood
 from sklearn.datasets import load_iris
 from sklearn.metrics import classification_report, log_loss
 from theano import shared
@@ -22,8 +22,9 @@ if __name__ == '__main__':
     y_one_hot = OneHotEncoder(sparse=False, dtype=floatX).fit_transform(y.reshape(-1, 1))
     print(y.shape)
     # We'll arbitrarily leave out the last 50 data points as our test set
-    X_train, y_train, y_train_one_hot = X[:-20, :], y[:-20], y_one_hot[:-20]
-    X_test, y_test, y_test_one_hot = X[-20:, :], y[-20:], y_one_hot[-20:]
+    TEST_SIZE = 100
+    X_train, y_train, y_train_one_hot = X[:-TEST_SIZE, :], y[:-TEST_SIZE], y_one_hot[:-TEST_SIZE]
+    X_test, y_test, y_test_one_hot = X[-TEST_SIZE:, :], y[-TEST_SIZE:], y_one_hot[-TEST_SIZE:]
 
     # Get some information about the dataset that we'll need for the model
     n_features = X.shape[1]
@@ -37,22 +38,27 @@ if __name__ == '__main__':
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianDenseLayer('input', weight_dist='Normal', shape=(n_features, HIDDEN_SIZE),
-                                         activation='relu')
+        input_layer = BayesianDense('input', weight_dist='Normal', shape=(n_features, HIDDEN_SIZE),
+                                    activation='relu')(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianDenseLayer('hidden1', weight_dist='Normal', activation='relu', shape=(HIDDEN_SIZE, HIDDEN_SIZE))
+        hidden_layer_1 = BayesianDense('hidden1', weight_dist='Normal', activation='relu',
+                                       shape=(HIDDEN_SIZE, HIDDEN_SIZE))(input_layer)
 
         # Create our output layer. We tell it not to use a bias.
-        output_layer = BayesianDenseLayer('output', weight_dist='Normal', activation='softmax', shape=(HIDDEN_SIZE, n_classes))
+        output_layer = BayesianDense('output', weight_dist='Normal', activation='softmax',
+                                     shape=(HIDDEN_SIZE, n_classes))(hidden_layer_1)
 
-    bnn.add_layer(input_layer)
-    bnn.add_layer(hidden_layer_1)
-    bnn.add_layer(output_layer)
+        likelihood_layer = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y,
+                                                                                'n': 1})
 
-    # Before we can use our model, we have to compile it. This adds the likelihood distribution that the model params
-    # are conditioned on
-    bnn.compile('Multinomial', 'p', **{'n': 1})
+    # bnn.add_layer(input_layer)
+    # bnn.add_layer(hidden_layer_1)
+    # bnn.add_layer(output_layer)
+    #
+    # # Before we can use our model, we have to compile it. This adds the likelihood distribution that the model params
+    # # are conditioned on
+    # bnn.compile('Multinomial', 'p', **{'n': 1})
 
     # The model itself follows the scikit-learn interface for training/predicting
     bnn.fit(X_train, y, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})

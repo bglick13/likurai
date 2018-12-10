@@ -1,5 +1,5 @@
 from likurai.model import BayesianNeuralNetwork
-from likurai.layer import BayesianDenseLayer, LikelihoodLayer
+from likurai.layer import BayesianDense, Likelihood
 from sklearn.datasets import load_boston
 from sklearn.metrics import r2_score, mean_squared_error
 from sklearn.preprocessing import QuantileTransformer
@@ -35,16 +35,16 @@ if __name__ == '__main__':
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianDenseLayer('input', input_size=n_features, output_size=HIDDEN_SIZE, activation='relu')(bnn.x)
+        input_layer = BayesianDense('input', input_size=n_features, output_size=HIDDEN_SIZE, activation='relu')(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianDenseLayer('hidden1', activation='relu', shape=(HIDDEN_SIZE, HIDDEN_SIZE))(input_layer)
+        hidden_layer_1 = BayesianDense('hidden1', activation='relu', shape=(HIDDEN_SIZE, HIDDEN_SIZE))(input_layer)
 
         # Create our output layer
-        output_layer = BayesianDenseLayer('output', weight_dist='Normal', activation='relu', shape=(HIDDEN_SIZE, 1))(hidden_layer_1)
+        output_layer = BayesianDense('output', activation='relu', shape=(HIDDEN_SIZE, 1))(hidden_layer_1)
 
-        likelihood = LikelihoodLayer('Gamma', 'alpha')(output_layer,
-                                                       **{'jitter': 1e-7, 'observed': bnn.y,
+        likelihood = Likelihood('Gamma', 'alpha')(output_layer,
+                                                  **{'jitter': 1e-7, 'observed': bnn.y,
                                                           'beta': {'dist': 'HalfCauchy', 'name': 'beta', 'beta': 3.}})
 
     # The model itself follows the scikit-learn interface for training/predicting
