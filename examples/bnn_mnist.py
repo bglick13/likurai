@@ -13,7 +13,7 @@ if __name__ == '__main__':
     # Load the dataset
     digits = load_digits()
     X, y = digits['data'], digits['target']
-    X = X.reshape((X.shape[0], 8, 8, 1))
+    X = X.reshape((X.shape[0], 1, 8, 8))
     img_width = X.shape[1]
     img_height = X.shape[2]
     X = X.astype(floatX)
@@ -38,7 +38,7 @@ if __name__ == '__main__':
                                      filter_size=(3, 3))(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianConv2D('hidden1', input_shape=(HIDDEN_SIZE, img_height, img_width),
+        hidden_layer_1 = BayesianConv2D('hidden1', input_shape=(HIDDEN_SIZE, 3, 3),
                                         output_size=HIDDEN_SIZE*2, activation='relu', filter_size=(3, 3))(input_layer)
 
         pool = MaxPooling2D((2, 2))(hidden_layer_1)

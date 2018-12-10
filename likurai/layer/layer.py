@@ -4,6 +4,7 @@ import pymc3 as pm
 from theano.tensor import concatenate
 import theano.tensor.nnet as nn
 import theano.tensor as tt
+from theano.tensor.signal.pool import pool_2d
 
 
 def retrieve_distribution(dist):
@@ -159,7 +160,7 @@ class BayesianConv2D(Layer):
         """
         super().__init__()
         self.use_bias = use_bias
-        self.weight_shape = (filter_size[0], filter_size[1], input_shape[-1], output_size)
+        self.weight_shape = (output_size, input_shape[0], filter_size[0], filter_size[1])
         self.weights = pm.Normal('{}_weights'.format(name), mu=0., sd=sd, shape=self.weight_shape)
 
         if self.use_bias:
@@ -175,7 +176,7 @@ class BayesianConv2D(Layer):
         input = concatenate(args, axis=1)
         act = nn.conv2d(input, self.weights)
         if self.use_bias:
-            act = act + self.bias
+            act = act + self.bias.dimshuffle('x', 0, 'x', 'x')
         if self.activation is None:
             return act
         else:
@@ -189,7 +190,7 @@ class MaxPooling2D(Layer):
 
     def __call__(self, *args, **kwargs):
         input = concatenate(args, axis=1)
-        return tt.signal.pool.pool_2d(input, self.pooling_size)
+        return pool_2d(input, self.pooling_size)
 
 
 class Flatten(Layer):
