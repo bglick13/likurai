@@ -35,25 +35,25 @@ if __name__ == '__main__':
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianDense('input', input_size=n_features, output_size=HIDDEN_SIZE, activation='relu')(bnn.x)
+        input_layer = BayesianDense('input', input_size=n_features, neurons=HIDDEN_SIZE, activation='relu')(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianDense('hidden1', activation='relu', shape=(HIDDEN_SIZE, HIDDEN_SIZE))(input_layer)
+        hidden_layer_1 = BayesianDense('hidden1', input_size=HIDDEN_SIZE, neurons=HIDDEN_SIZE, activation='relu')(input_layer)
 
         # Create our output layer
-        output_layer = BayesianDense('output', activation='relu', shape=(HIDDEN_SIZE, 1))(hidden_layer_1)
+        output_layer = BayesianDense('output', input_size=HIDDEN_SIZE, neurons=1, activation='relu')(hidden_layer_1)
 
         likelihood = Likelihood('Gamma', 'alpha')(output_layer,
                                                   **{'jitter': 1e-7, 'observed': bnn.y,
                                                           'beta': {'dist': 'HalfCauchy', 'name': 'beta', 'beta': 3.}})
 
     # The model itself follows the scikit-learn interface for training/predicting
-    bnn.fit(X_train, y_train, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
-    # bnn.fit(X_train, y_train, epochs=100000, method='advi', batch_size=32)
+    # bnn.fit(X_train, y_train, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
+    bnn.fit(X_train, y_train, epochs=100000, method='advi', batch_size=32, n_models=1)
 
     # Generate predictions
     pred = bnn.predict(X_test, n_samples=1000)
-    print(pred)
+    print(pred.shape)
     # However, for simplicity's sake, we can also tell the model to just give us point-estimate predictions
     point_pred = bnn.predict(X_test, n_samples=1000, point_estimate=True)
 
