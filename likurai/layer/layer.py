@@ -5,6 +5,7 @@ from theano.tensor import concatenate
 import theano.tensor.nnet as nn
 import theano.tensor as tt
 from theano.tensor.signal.pool import pool_2d
+import numpy as np
 
 
 def retrieve_distribution(dist):
@@ -64,7 +65,7 @@ class Likelihood(Layer):
 
 
 class BayesianDense(Layer):
-    def __init__(self, name, neurons=None, input_size=None, activation: str or function=None, sd=0.5, use_bias=True, **kwargs):
+    def __init__(self, name, neurons=None, input_size=None, activation: str or function=None, mu=0., sd=0.5, use_bias=True, **kwargs):
         """
         Initialize a basic dense layer in a Bayesian framework
         :param name: Name of the layer
@@ -80,6 +81,7 @@ class BayesianDense(Layer):
         self.neurons = neurons
         self.input_size = input_size
         self.use_bias = use_bias
+        self.mu = mu
         self.sd = sd
         self.weights = None
         self.bias = None
@@ -93,7 +95,7 @@ class BayesianDense(Layer):
     def build(self, *args):
         self.input = concatenate(args, axis=1)
         shape = (self.input_size, self.neurons)
-        self.weights = pm.Normal('{}_weights'.format(self.name), mu=0., sd=self.sd, shape=shape)
+        self.weights = pm.Normal('{}_weights'.format(self.name), mu=self.mu, sd=self.sd, shape=shape)
         if self.use_bias:
             self.bias = pm.Normal('{}_bias'.format(self.name), mu=0., sd=1., shape=self.neurons)
         self.built = True
@@ -170,7 +172,7 @@ class HierarchicalBayesianDense(Layer):
 
 
 class BayesianConv2D(Layer):
-    def __init__(self, name, filters, channels, filter_size, activation=None, use_bias=True, sd=.5):
+    def __init__(self, name, filters, channels, filter_size, activation=None, use_bias=True, mu=0., sd=.5):
         """
 
         :param name:
@@ -186,6 +188,7 @@ class BayesianConv2D(Layer):
         self.filters = filters
         self.channels = channels
         self.filter_size = filter_size
+        self.mu = mu
         self.sd = sd
         self.use_bias = use_bias
         self.weights = None
@@ -200,7 +203,7 @@ class BayesianConv2D(Layer):
     def build(self, *args):
         self.input = concatenate(args, axis=1)
         shape = (self.filters, self.channels, self.filter_size[0], self.filter_size[1])
-        self.weights = pm.Normal('{}_weights'.format(self.name), mu=0., sd=self.sd, shape=shape)
+        self.weights = pm.Normal('{}_weights'.format(self.name), mu=np.transpose(self.mu), sd=self.sd, shape=shape)
         if self.use_bias:
             self.bias = pm.Normal('{}_bias'.format(self.name), mu=0., sd=1., shape=self.filters)
         self.built = True
