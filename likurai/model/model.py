@@ -50,11 +50,9 @@ class Model:
     def predict(self, X):
         pass
 
+    def save_model(self, filepath):
+        pass
 
-def load_model(filepath):
-    model = pickle.load(open(filepath, 'rb'))
-    return model
+    def load_model(self, filepath):
+        pass
 
-
-def save_model(model, filepath):
-    pickle.dump(model, open(filepath, 'wb'))

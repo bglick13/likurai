@@ -5,6 +5,7 @@ from likurai import floatX
 from likurai import shared
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import  classification_report
 
 
 if __name__ == '__main__':
@@ -22,7 +23,7 @@ if __name__ == '__main__':
     X /= 255.
     y = y.astype(floatX).reshape(-1, 1)
 
-    TEST_SIZE = 100
+    TEST_SIZE = 500
 
     # We'll arbitrarily leave out the last 100 data points as our test set
     X_train, y_train, y_train_one_hot = X[:-TEST_SIZE, :], y[:-TEST_SIZE], y_one_hot[:-TEST_SIZE]
@@ -54,14 +55,16 @@ if __name__ == '__main__':
         likelihood = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y, 'n': 1})
 
     # The model itself follows the scikit-learn interface for training/predicting
-    bnn.fit(X_train, y_train, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
-    # bnn.fit(X_train, y_train, epochs=100000, method='advi', batch_size=32)
+    bnn.fit(X_train, y_train_one_hot, epochs=300, method='nuts', **{'tune': 1000, 'njobs': 1, 'chains': 1})
+    # bnn.fit(X_train, y_train_one_hot, epochs=100000, method='advi', batch_size=32)
 
     # Generate predictions
     pred = bnn.predict(X_test, n_samples=1000)
     print(pred)
     # However, for simplicity's sake, we can also tell the model to just give us point-estimate predictions
     point_pred = bnn.predict(X_test, n_samples=1000, point_estimate=True)
+    print('BNN:\n{}'.format(classification_report(y_test, point_pred.argmax(axis=0))))
+
 
     # Let's just make a simple baseline using a scikit model. Eventually I'll use a comparable NN
     # params = {'n_estimators': 500, 'max_depth': 4, 'min_samples_split': 2,
