@@ -80,7 +80,7 @@ if __name__ == '__main__':
         dense = BayesianDense('dense_hidden', neurons=6, input_size=54, mu=model.layers[4].get_weights()[0], activation='relu')(flatten)
 
         # Create our output layer
-        output_layer = BayesianDense('output', neurons=10, input_size=6, mu=model.layers[5].get_weights()[0], activation='relu')(dense)
+        output_layer = BayesianDense('output', neurons=10, input_size=6, mu=model.layers[5].get_weights()[0], activation='softmax')(dense)
 
         likelihood = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y, 'n': 1})
 
