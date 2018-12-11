@@ -17,9 +17,14 @@ def retrieve_activation(act):
 
 class Layer:
     def __init__(self):
-        pass
+        self.name = None
+        self.built = False
+        self.input = None
 
     def __call__(self, *args, **kwargs):
+        pass
+
+    def build(self, *args):
         pass
 
 
@@ -32,6 +37,8 @@ class Likelihood(Layer):
         :param kwargs:
         :return:
         """
+        super().__init__()
+        self.name = 'likelihood'
         self.dist = getattr(pm, dist)
         self.connected_param = connected_param
 
@@ -57,8 +64,7 @@ class Likelihood(Layer):
 
 
 class BayesianDense(Layer):
-    def __init__(self, name, input_size=None, output_size=None, shape=None, activation: str or function=None, sd=0.5,
-                 use_bias=True, **kwargs):
+    def __init__(self, name, neurons=None, input_size=None, activation: str or function=None, sd=0.5, use_bias=True, **kwargs):
         """
         Initialize a basic dense layer in a Bayesian framework
         :param name: Name of the layer
@@ -70,16 +76,13 @@ class BayesianDense(Layer):
         :param kwargs: Should be dict of dict containing 'weight_kwargs', 'bias_kwargs'
         """
         super().__init__()
-
-        if shape is None and (input_size is None or output_size is None):
-            raise ValueError("Must either provide shape or set input and output size")
-        if shape is None:
-            shape = (input_size, output_size)
-
+        self.name = name
+        self.neurons = neurons
+        self.input_size = input_size
         self.use_bias = use_bias
-        self.weights = pm.Normal('{}_weights'.format(name), mu=0., sd=sd, shape=shape)
-        if self.use_bias:
-            self.bias = pm.Normal('{}_bias'.format(name), mu=0., sd=1., shape=shape[1])
+        self.sd = sd
+        self.weights = None
+        self.bias = None
 
         if isinstance(activation, str):
             if activation == 'linear' or activation is None:
@@ -87,9 +90,18 @@ class BayesianDense(Layer):
             else:
                 self.activation = retrieve_activation(activation)
 
+    def build(self, *args):
+        self.input = concatenate(args, axis=1)
+        shape = (self.input_size, self.neurons)
+        self.weights = pm.Normal('{}_weights'.format(self.name), mu=0., sd=self.sd, shape=shape)
+        if self.use_bias:
+            self.bias = pm.Normal('{}_bias'.format(self.name), mu=0., sd=1., shape=self.neurons)
+        self.built = True
+
     def __call__(self, *args, **kwargs):
-        input = concatenate(args, axis=1)
-        act = pm.math.dot(input, self.weights)
+        if not self.built:
+            self.build(*args)
+        act = pm.math.dot(self.input, self.weights)
         if self.use_bias:
             act = act + self.bias
         if self.activation is None:
@@ -99,8 +111,8 @@ class BayesianDense(Layer):
 
 
 class HierarchicalBayesianDense(Layer):
-    def __init__(self, name, input_size=None, output_size=None, n_groups=None, shape=None, sd=.5,
-                 activation: str or function=None, use_bias=True, **kwargs):
+    def __init__(self, name, neurons=None, input_size=None, n_groups=None, sd=.5, activation: str or function=None, use_bias=True,
+                 **kwargs):
         """
         Initialize a basic dense layer in a Bayesian framework
         :param name: Name of the layer
@@ -112,22 +124,18 @@ class HierarchicalBayesianDense(Layer):
         :param kwargs: Should be dict of dict containing 'weight_kwargs', 'bias_kwargs'
         """
         super().__init__()
-
-        if shape is None and (input_size is None or output_size is None):
-            raise ValueError("Must either provide shape or set input and output size")
-        if shape is None:
-            shape = (input_size, output_size)
-            grp_shape = (n_groups, input_size, output_size)
-
+        self.name = name
+        self.neurons = neurons
+        self.inpute_size = input_size
         self.use_bias = use_bias
         self.n_groups = n_groups
+        self.sd = sd
 
-        self.weights_grp = pm.Normal('{}_weights_grp'.format(name), mu=0., sd=sd, shape=shape)
-        self.weights_sd = pm.HalfNormal('{}_sd', sd=1.)
-        self.weights_raw = pm.Normal('{}_weights_raw', mu=0., sd=sd, shape=grp_shape)
-        self.weights = self.weights_grp + self.weights_raw * self.weights_sd
-        if self.use_bias:
-            self.bias = pm.Normal('{}_bias'.format(name), mu=0., sd=1., shape=shape[1])
+        self.weights_grp = None
+        self.weights_sd = None
+        self.weights_raw = None
+        self.weights = None
+        self.bias = None
 
         if isinstance(activation, str):
             if activation == 'linear' or activation is None:
@@ -135,9 +143,24 @@ class HierarchicalBayesianDense(Layer):
             else:
                 self.activation = retrieve_activation(activation)
 
+    def build(self, *args):
+        self.input = concatenate(args, axis=1)
+
+        shape = (self.inpute_size, self.neurons)
+        grp_shape = (self.n_groups, self.inpute_size, self.neurons)
+
+        self.weights_grp = pm.Normal('{}_weights_grp'.format(self.name), mu=0., sd=self.sd, shape=shape)
+        self.weights_sd = pm.HalfNormal('{}_sd', sd=1.)
+        self.weights_raw = pm.Normal('{}_weights_raw', mu=0., sd=self.sd, shape=grp_shape)
+        self.weights = self.weights_grp + self.weights_raw * self.weights_sd
+        if self.use_bias:
+            self.bias = pm.Normal('{}_bias'.format(self.name), mu=0., sd=1., shape=self.neurons)
+        self.built = True
+
     def __call__(self, *args, **kwargs):
-        input = concatenate(args, axis=1)
-        act = tt.batched_dot(input, self.weights)
+        if not self.built:
+            self.build(*args)
+        act = tt.batched_dot(self.input, self.weights)
         if self.use_bias:
             act = act + self.bias
         if self.activation is None:
@@ -147,7 +170,7 @@ class HierarchicalBayesianDense(Layer):
 
 
 class BayesianConv2D(Layer):
-    def __init__(self, name, input_shape, output_size, filter_size, activation=None, use_bias=True, sd=.5):
+    def __init__(self, name, filters, channels, filter_size, activation=None, use_bias=True, sd=.5):
         """
 
         :param name:
@@ -159,12 +182,14 @@ class BayesianConv2D(Layer):
         :param sd:
         """
         super().__init__()
+        self.name = name
+        self.filters = filters
+        self.channels = channels
+        self.filter_size = filter_size
+        self.sd = sd
         self.use_bias = use_bias
-        self.weight_shape = (output_size, input_shape[0], filter_size[0], filter_size[1])
-        self.weights = pm.Normal('{}_weights'.format(name), mu=0., sd=sd, shape=self.weight_shape)
-
-        if self.use_bias:
-            self.bias = pm.Normal('{}_bias'.format(name), mu=0., sd=1., shape=output_size)
+        self.weights = None
+        self.bias = None
 
         if isinstance(activation, str):
             if activation == 'linear' or activation is None:
@@ -172,9 +197,18 @@ class BayesianConv2D(Layer):
             else:
                 self.activation = retrieve_activation(activation)
 
+    def build(self, *args):
+        self.input = concatenate(args, axis=1)
+        shape = (self.filters, self.channels, self.filter_size[0], self.filter_size[1])
+        self.weights = pm.Normal('{}_weights'.format(self.name), mu=0., sd=self.sd, shape=shape)
+        if self.use_bias:
+            self.bias = pm.Normal('{}_bias'.format(self.name), mu=0., sd=1., shape=self.filters)
+        self.built = True
+
     def __call__(self, *args, **kwargs):
-        input = concatenate(args, axis=1)
-        act = nn.conv2d(input, self.weights)
+        if not self.built:
+            self.build(*args)
+        act = nn.conv2d(self.input, self.weights)
         if self.use_bias:
             act = act + self.bias.dimshuffle('x', 0, 'x', 'x')
         if self.activation is None:
@@ -199,4 +233,4 @@ class Flatten(Layer):
 
     def __call__(self, *args, **kwargs):
         input = concatenate(args, axis=1)
-        return input.flatten()
+        return input.flatten(2)

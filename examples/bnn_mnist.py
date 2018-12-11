@@ -4,6 +4,7 @@ from likurai.model import BayesianNeuralNetwork
 from likurai import floatX
 from likurai import shared
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import OneHotEncoder
 
 
 if __name__ == '__main__':
@@ -13,15 +14,18 @@ if __name__ == '__main__':
     # Load the dataset
     digits = load_digits()
     X, y = digits['data'], digits['target']
+    y_one_hot = OneHotEncoder(sparse=False, dtype=floatX).fit_transform(y.reshape(-1, 1))
     X = X.reshape((X.shape[0], 1, 8, 8))
     img_width = X.shape[1]
     img_height = X.shape[2]
     X = X.astype(floatX)
     y = y.astype(floatX).reshape(-1, 1)
 
+    TEST_SIZE = 100
+
     # We'll arbitrarily leave out the last 100 data points as our test set
-    X_train, y_train = X[:-100, :], y[:-100]
-    X_test, y_test = X[-100:, :], y[-100:]
+    X_train, y_train, y_train_one_hot = X[:-TEST_SIZE, :], y[:-TEST_SIZE], y_one_hot[:-TEST_SIZE]
+    X_test, y_test, y_test_one_hot = X[-TEST_SIZE:, :], y[-TEST_SIZE:], y_one_hot[-TEST_SIZE:]
 
     # Get some information about the dataset that we'll need for the model
     n_features = X.shape[1]
@@ -30,22 +34,21 @@ if __name__ == '__main__':
     # Initialize a model object
     bnn = BayesianNeuralNetwork()
     bnn.x = shared(X_train.astype(floatX))
-    bnn.y = shared(y_train.astype(floatX))
+    bnn.y = shared(y_train_one_hot.astype(floatX))
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianConv2D('input', input_shape=X[0].shape, output_size=HIDDEN_SIZE, activation='relu',
-                                     filter_size=(3, 3))(bnn.x)
+        input_layer = BayesianConv2D('input', filters=HIDDEN_SIZE, channels=1, activation='relu', filter_size=(4, 4))(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianConv2D('hidden1', input_shape=(HIDDEN_SIZE, 3, 3),
-                                        output_size=HIDDEN_SIZE*2, activation='relu', filter_size=(3, 3))(input_layer)
+        hidden_layer_1 = BayesianConv2D('hidden1', filters=HIDDEN_SIZE, activation='relu', channels=HIDDEN_SIZE,
+                                        filter_size=(4, 4))(input_layer)
 
         pool = MaxPooling2D((2, 2))(hidden_layer_1)
         flatten = Flatten()(pool)
 
         # Create our output layer
-        output_layer = BayesianDense('output', activation='relu', shape=(HIDDEN_SIZE, 1))(flatten)
+        output_layer = BayesianDense('output', neurons=10, input_size=6, activation='relu')(flatten)
 
         likelihood = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y, 'n': 1})
 
