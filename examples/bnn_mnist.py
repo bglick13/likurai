@@ -9,7 +9,7 @@ from sklearn.preprocessing import OneHotEncoder
 
 if __name__ == '__main__':
     # Define some constants for the model architecture
-    HIDDEN_SIZE = 6
+    HIDDEN_SIZE = 3
 
     # Load the dataset
     digits = load_digits()
@@ -19,6 +19,7 @@ if __name__ == '__main__':
     img_width = X.shape[1]
     img_height = X.shape[2]
     X = X.astype(floatX)
+    X /= 255.
     y = y.astype(floatX).reshape(-1, 1)
 
     TEST_SIZE = 100
@@ -38,17 +39,17 @@ if __name__ == '__main__':
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianConv2D('input', filters=HIDDEN_SIZE, channels=1, activation='relu', filter_size=(4, 4))(bnn.x)
+        input_layer = BayesianConv2D('input', filters=HIDDEN_SIZE, channels=1, activation='relu', filter_size=(2, 2))(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
         hidden_layer_1 = BayesianConv2D('hidden1', filters=HIDDEN_SIZE, activation='relu', channels=HIDDEN_SIZE,
-                                        filter_size=(4, 4))(input_layer)
+                                        filter_size=(2, 2))(input_layer)
 
         pool = MaxPooling2D((2, 2))(hidden_layer_1)
         flatten = Flatten()(pool)
 
         # Create our output layer
-        output_layer = BayesianDense('output', neurons=10, input_size=6, activation='relu')(flatten)
+        output_layer = BayesianDense('output', neurons=10, input_size=27, activation='relu')(flatten)
 
         likelihood = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y, 'n': 1})
 
