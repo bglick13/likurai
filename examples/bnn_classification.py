@@ -38,30 +38,19 @@ if __name__ == '__main__':
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianDense('input', weight_dist='Normal', shape=(n_features, HIDDEN_SIZE),
-                                    activation='relu')(bnn.x)
+        input_layer = BayesianDense('input', input_size=n_features, neurons=HIDDEN_SIZE, activation='relu')(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianDense('hidden1', weight_dist='Normal', activation='relu',
-                                       shape=(HIDDEN_SIZE, HIDDEN_SIZE))(input_layer)
+        hidden_layer_1 = BayesianDense('hidden1', input_size=HIDDEN_SIZE, neurons=HIDDEN_SIZE, activation='relu')(input_layer)
 
         # Create our output layer. We tell it not to use a bias.
-        output_layer = BayesianDense('output', weight_dist='Normal', activation='softmax',
-                                     shape=(HIDDEN_SIZE, n_classes))(hidden_layer_1)
+        output_layer = BayesianDense('output', input_size=HIDDEN_SIZE, neurons=n_classes, activation='softmax')(hidden_layer_1)
 
-        likelihood_layer = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y,
-                                                                                'n': 1})
-
-    # bnn.add_layer(input_layer)
-    # bnn.add_layer(hidden_layer_1)
-    # bnn.add_layer(output_layer)
-    #
-    # # Before we can use our model, we have to compile it. This adds the likelihood distribution that the model params
-    # # are conditioned on
-    # bnn.compile('Multinomial', 'p', **{'n': 1})
+        likelihood_layer = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y, 'n': 1})
 
     # The model itself follows the scikit-learn interface for training/predicting
     bnn.fit(X_train, y, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
+    bnn.save_model('classification_example.pickle')
     # bnn.fit(X_train, y_train_one_hot, epochs=100000, method='advi', batch_size=32)
 
     # Generate predictions

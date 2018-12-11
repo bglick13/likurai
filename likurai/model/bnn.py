@@ -15,6 +15,8 @@ class BayesianNeuralNetwork(Model):
     def __init__(self):
         super().__init__()
         # Model inputs/targets
+        self.train_x = None  # Useful for introspection later
+        self.train_y = None  # Useful for introspection later
         self.x = shared(np.zeros((1, 1)).astype(floatX))
         self.y = shared(np.array([]).astype(floatX))
 
@@ -34,6 +36,7 @@ class BayesianNeuralNetwork(Model):
         :param sample_kwargs:
         :return:
         """
+        self.train_x = x
         with self.model:
             if method == 'nuts':
                 # self.x.set_value(x)
@@ -76,8 +79,8 @@ class BayesianNeuralNetwork(Model):
 
     def save_model(self, filepath):
         with open(filepath, 'wb') as f:
-            pickle.dump([self.model, self.trace, self.x, self.y], f)
+            pickle.dump([self.model, self.trace, self.x, self.y, self.train_x, self.train_y], f)
 
     def load_model(self, filepath):
         with open(filepath, 'rb') as f:
-            self.model, self.trace, self.x, self.y = pickle.load(f)
+            self.model, self.trace, self.x, self.y, self.train_x, self.train_y = pickle.load(f)
