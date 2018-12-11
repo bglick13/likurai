@@ -42,7 +42,7 @@ class BayesianNeuralNetwork(Model):
                 # self.x.set_value(x)
                 # self.y.set_value(y)
                 for _ in range(n_models):
-                    self.trace.append(pm.sample(epochs, init='advi', **sample_kwargs))
+                    self.trace.append(pm.sample(epochs, **sample_kwargs))
             else:
                 mini_x = pm.Minibatch(x, batch_size=batch_size, dtype=floatX)
                 mini_y = pm.Minibatch(y, batch_size=batch_size, dtype=floatX)

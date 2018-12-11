@@ -85,7 +85,8 @@ if __name__ == '__main__':
         likelihood = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y, 'n': 1})
 
     # The model itself follows the scikit-learn interface for training/predicting
-    bnn.fit(X_train, y_train_one_hot, epochs=300, method='nuts', **{'tune': 1000, 'njobs': 1, 'chains': 1})
+    bnn.fit(X_train, y_train_one_hot, epochs=300, method='nuts', **{'tune': 1000, 'njobs': 1, 'chains': 1,
+                                                                    'init': 'adapt_diag'})
     bnn.save_model('mnist_informative.pickle')
     # bnn.fit(X_train, y_train_one_hot, epochs=100000, method='advi', batch_size=32)
 
