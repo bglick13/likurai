@@ -44,7 +44,11 @@ class Likelihood(Layer):
         self.connected_param = connected_param
 
     def __call__(self, *args, **kwargs):
-        input = concatenate(args, axis=1)
+        if 'concat_axis' in kwargs:
+            concat_axis = kwargs.pop('concat_axis')
+        else:
+            concat_axis = 1
+        input = concatenate(args, axis=concat_axis)
         _params = {self.connected_param: input}
 
         try:
@@ -113,8 +117,8 @@ class BayesianDense(Layer):
 
 
 class HierarchicalBayesianDense(Layer):
-    def __init__(self, name, neurons=None, input_size=None, n_groups=None, sd=.5, activation: str or function=None, use_bias=True,
-                 **kwargs):
+    def __init__(self, name, neurons=None, input_size=None, n_groups=None, mu=0., sd=.5,
+        activation: str or function=None, use_bias=True, **kwargs):
         """
         Initialize a basic dense layer in a Bayesian framework
         :param name: Name of the layer
@@ -128,9 +132,10 @@ class HierarchicalBayesianDense(Layer):
         super().__init__()
         self.name = name
         self.neurons = neurons
-        self.inpute_size = input_size
+        self.input_size = input_size
         self.use_bias = use_bias
         self.n_groups = n_groups
+        self.mu = mu
         self.sd = sd
 
         self.weights_grp = None
@@ -146,15 +151,15 @@ class HierarchicalBayesianDense(Layer):
                 self.activation = retrieve_activation(activation)
 
     def build(self, *args):
-        self.input = concatenate(args, axis=1)
+        self.input = concatenate(args, axis=2)
 
-        shape = (self.inpute_size, self.neurons)
-        grp_shape = (self.n_groups, self.inpute_size, self.neurons)
+        shape = (self.input_size, self.neurons)
+        raw_shape = (self.n_groups, self.input_size, self.neurons)
 
-        self.weights_grp = pm.Normal('{}_weights_grp'.format(self.name), mu=0., sd=self.sd, shape=shape)
-        self.weights_sd = pm.HalfNormal('{}_sd', sd=1.)
-        self.weights_raw = pm.Normal('{}_weights_raw', mu=0., sd=self.sd, shape=grp_shape)
-        self.weights = self.weights_grp + self.weights_raw * self.weights_sd
+        self.weights_grp = pm.Normal('{}_weights_grp'.format(self.name), mu=self.mu, sd=self.sd, shape=shape)
+        self.weights_sd = pm.HalfNormal('{}_sd'.format(self.name), sd=1.)
+        self.weights_raw = pm.Normal('{}_weights_raw'.format(self.name), mu=0., sd=self.sd, shape=raw_shape)
+        self.weights = self.weights_raw * self.weights_sd + self.weights_grp
         if self.use_bias:
             self.bias = pm.Normal('{}_bias'.format(self.name), mu=0., sd=1., shape=self.neurons)
         self.built = True
