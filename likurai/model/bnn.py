@@ -36,6 +36,7 @@ class BayesianNeuralNetwork(Model):
         :return:
         """
         self.train_x = x
+        self.train_y = y
         with self.model:
             if method == 'nuts':
                 # self.x.set_value(x)

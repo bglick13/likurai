@@ -53,7 +53,7 @@ pred = bnn.predict(X_test, n_samples=1000)
 The TODO list includes the following:
 - Speed improvements. The downside of Bayesian DL is it's significantly slower than traditional DL
     - Use weights from a traditional NN as informative priors
-    - Train ensembles of models using ADVI instead of NUTS
+    - ~~Train ensembles of models using ADVI instead of NUTS~~ This don't seem to work so good
 - Visualization/explanation
     - Explore the decision/uncertainty surface for features
     - Explore the level of specialization in Hierarchical BNNs

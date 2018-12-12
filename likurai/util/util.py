@@ -1,6 +1,26 @@
 import numpy as np
 
 
+def get_class_exemplar(draws, class_index, n_exemplars=1, best=True, labels=None):
+    """
+    Get representative examples of a class for a BNN classifier
+
+    :param class_index: int
+    :param n_exemplars: int
+    :param best: True if you want exemplars. False if you want the least representative examples
+    :param labels: If provided and best is False, return the worst exemplars from the actual class
+    :return:
+    """
+    if labels is not None:
+        # We only want the "predictions" where the ground truth is the label in question
+        draws = draws[:, labels[:, class_index] == 1]
+    draws = np.argsort(draws[class_index, :])
+    if best:
+        draws = draws[::-1]
+    examples = draws[:n_exemplars]
+    return examples
+
+
 def get_dense_network_shapes(n_layers, hidden_size, n_features, n_outputs):
     """
     Helper function to generate the input/output shapes for the layers of a densely connected network

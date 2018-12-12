@@ -5,6 +5,19 @@ from sklearn.metrics import r2_score, mean_squared_error
 from sklearn import ensemble
 import matplotlib.pyplot as plt
 from likurai import floatX, shared
+from keras.models import Sequential
+from keras.layers import Dense
+
+
+def make_deterministic_model():
+    model = Sequential()
+    model.add(Dense(6, activation='relu'))
+    model.add(Dense(6, activation='relu'))
+    model.add(Dense(1, activation='relu'))
+
+    model.compile('adam', loss='mse')
+    return model
+
 
 if __name__ == '__main__':
     # Define some constants for the model architecture
@@ -24,6 +37,9 @@ if __name__ == '__main__':
     n_features = X.shape[1]
     n_samples  = X.shape[0]
 
+    nn = make_deterministic_model()
+    nn.fit(X_train, y_train, batch_size=6, epochs=100)
+
     # Initialize a model object
     bnn = BayesianNeuralNetwork()
     bnn.x.set_value(X_train.astype(floatX))
@@ -31,13 +47,16 @@ if __name__ == '__main__':
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianDense('input', input_size=n_features, neurons=HIDDEN_SIZE, activation='relu')(bnn.x)
+        input_layer = BayesianDense('input', input_size=n_features, neurons=HIDDEN_SIZE, activation='relu',
+                                    mu=nn.layers[0].get_weights()[0])(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianDense('hidden1', input_size=HIDDEN_SIZE, neurons=HIDDEN_SIZE, activation='relu')(input_layer)
+        hidden_layer_1 = BayesianDense('hidden1', input_size=HIDDEN_SIZE, neurons=HIDDEN_SIZE, activation='relu',
+                                       mu=nn.layers[1].get_weights()[0])(input_layer)
 
         # Create our output layer
-        output_layer = BayesianDense('output', input_size=HIDDEN_SIZE, neurons=1, activation='relu')(hidden_layer_1)
+        output_layer = BayesianDense('output', input_size=HIDDEN_SIZE, neurons=1, activation='relu',
+                                     mu=nn.layers[2].get_weights()[0])(hidden_layer_1)
 
         likelihood = Likelihood('Gamma', 'alpha')(output_layer,
                                                   **{'jitter': 1e-7, 'observed': bnn.y,
@@ -45,11 +64,8 @@ if __name__ == '__main__':
 
     # The model itself follows the scikit-learn interface for training/predicting
     # bnn.fit(X_train, y_train, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
-    bnn.fit(X_train, y_train, epochs=100000, method='advi', batch_size=32, n_models=1)
+    bnn.fit(X_train, y_train, epochs=10000, method='advi', batch_size=32, n_models=1)
 
-    # Generate predictions
-    pred = bnn.predict(X_test, n_samples=1000)
-    print(pred.shape)
     # However, for simplicity's sake, we can also tell the model to just give us point-estimate predictions
     point_pred = bnn.predict(X_test, n_samples=1000, point_estimate=True)
 

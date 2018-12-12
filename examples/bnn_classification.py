@@ -48,16 +48,12 @@ if __name__ == '__main__':
         likelihood_layer = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y, 'n': 1})
 
     # The model itself follows the scikit-learn interface for training/predicting
-    bnn.fit(X_train, y, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
+    # bnn.fit(X_train, y, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
+    bnn.fit(X_train, y_train_one_hot, epochs=5000, method='svgd', batch_size=32, n_models=1)
     bnn.save_model('classification_example.pickle')
-    # bnn.fit(X_train, y_train_one_hot, epochs=100000, method='advi', batch_size=32)
 
-    # Generate predictions
-    pred = bnn.predict(X_test, n_samples=1000)
-    print(pred.shape)
     # However, for simplicity's sake, we can also tell the model to just give us point-estimate predictions
     point_pred = bnn.predict(X_test, n_samples=1000, point_estimate=True)
-    point_pred = point_pred
     print(point_pred)
     print(point_pred.shape)
     # Let's just make a simple baseline using a scikit model. Eventually I'll use a comparable NN
