@@ -44,8 +44,8 @@ if __name__ == '__main__':
                                                           'beta': {'dist': 'HalfCauchy', 'name': 'beta', 'beta': 3.}})
 
     # The model itself follows the scikit-learn interface for training/predicting
-    # bnn.fit(X_train, y_train, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
-    bnn.fit(X_train, y_train, epochs=100000, method='advi', batch_size=32, n_models=1)
+    bnn.fit(X_train, y_train, epochs=1000, method='nuts', **{'tune': 2000, 'njobs': 1, 'chains': 1})
+    # bnn.fit(X_train, y_train, epochs=100000, method='advi', batch_size=32, n_models=1)
 
     # Generate predictions
     pred = bnn.predict(X_test, n_samples=1000)
