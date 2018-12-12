@@ -6,9 +6,8 @@ import numpy as np
 import pymc3 as pm
 from . import Model
 from .. import shared
-import theano
 import pickle
-floatX = theano.config.floatX
+from .. import floatX
 
 
 class BayesianNeuralNetwork(Model):

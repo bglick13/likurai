@@ -2,13 +2,9 @@ from likurai.model import BayesianNeuralNetwork
 from likurai.layer import BayesianDense, Likelihood
 from sklearn.datasets import load_boston
 from sklearn.metrics import r2_score, mean_squared_error
-from sklearn.preprocessing import QuantileTransformer
 from sklearn import ensemble
-import pymc3 as pm
 import matplotlib.pyplot as plt
-import theano
-from theano import shared
-floatX = theano.config.floatX
+from likurai import floatX, shared
 
 if __name__ == '__main__':
     # Define some constants for the model architecture

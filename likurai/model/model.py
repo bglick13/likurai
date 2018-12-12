@@ -3,8 +3,6 @@ Defines the interface for a Model. Ideally, everything in this API will follow t
 to scikit-learn's
 """
 from ..layer import Layer
-import theano
-floatX = theano.config.floatX
 
 
 class Model:

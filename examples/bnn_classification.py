@@ -5,11 +5,10 @@ from sklearn.metrics import classification_report, log_loss
 from theano import shared
 from sklearn import ensemble
 from sklearn.preprocessing import OneHotEncoder
-import pymc3 as pm
 from sklearn.utils import shuffle
-import theano
 import numpy as np
-floatX = theano.config.floatX
+from likurai import floatX
+
 
 if __name__ == '__main__':
     # Define some constants for the model architecture

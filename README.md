@@ -80,3 +80,15 @@ Yeah! What'd you expect me to say?
 It's worked on a bunch of super secret personal projects. That's the whole point of me making this library.
 
 I'm working on making some examples on traditional datasets (MNIST!) so you can have a real comparison, but until then, just take my word for it.
+
+
+**Requirements**
+
+- PyMC3
+- Theano
+- Numpy
+
+to run some of the examples you may need the following
+- Scikit-Learn
+- Keras
+- Matplotlib
