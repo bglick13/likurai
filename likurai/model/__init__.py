@@ -1,4 +1,4 @@
 from .model import Model
-from .bnn import BayesianNeuralNetwork
+from .bnn import BayesianNeuralNetwork, HierarchicalBayesianNeuralNetwork
 
 

@@ -56,7 +56,7 @@ class BayesianNeuralNetwork(Model):
                     self.trace.append(approx.sample(draws=20000))
                     self.approx.append(approx)
 
-    def predict(self, x, n_samples=1, progressbar=True, point_estimate=False):
+    def predict(self, x, n_samples=1, progressbar=True, point_estimate=False, **kwargs):
         self.x.set_value(x.astype(floatX))
         if len(x.shape) == 3:
             # Hierarchical model
@@ -88,3 +88,69 @@ class BayesianNeuralNetwork(Model):
     def load_model(self, filepath):
         with open(filepath, 'rb') as f:
             self.model, self.trace, self.x, self.y, self.train_x, self.train_y = pickle.load(f)
+
+
+class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
+    def __init__(self):
+        super().__init__()
+
+    def _prepare_train_data(self, x, y, groups):
+        Xs, Ys = [], []
+        min_len = np.inf
+        for i in np.unique(groups):
+            X = np.array(x[groups == i]).astype(float)
+            Y = np.array(y[groups == i]).astype(float)
+            if len(X) < min_len:
+                min_len = len(X)
+            Xs.append(X)
+            Ys.append(Y)
+
+        Xss, Yss = [], []
+        for _x, _y in zip(Xs, Ys):
+            _x = _x[:min_len, :]
+            _y = _y[:min_len]
+
+            Xss.append(_x)
+            Yss.append(_y)
+
+        x = np.stack(Xss)
+        y = np.stack(Yss)
+        return x, y
+
+    def _prepare_test_data(self, x, groups):
+        Xs = []
+        max_len = 0
+        for i in np.unique(groups):
+            X = np.array(x[groups == i]).astype(float)
+            if len(X) > max_len:
+                max_len = len(X)
+            Xs.append(X)
+
+        Xss = []
+        mask_idxs = []
+        for _x in Xs:
+            app_x = np.ones((max_len - len(_x), _x.shape[1]))  # * np.nan
+            mask_idxs.append(len(_x))
+            _x = np.vstack((_x, app_x))
+            Xss.append(_x)
+
+        x = np.stack(Xss)
+        return x
+
+    def fit(self, x, y, epochs=30000, method='advi', batch_size=128, n_models=1, **sample_kwargs):
+        groups = sample_kwargs.pop('groups')
+        x, y = self._prepare_train_data(x, y, groups)
+        super().fit(x, y, epochs, method, batch_size, n_models, **sample_kwargs)
+
+    def predict(self, x, n_samples=1, progressbar=True, point_estimate=False, **kwargs):
+        groups = kwargs.pop('groups')
+        x = self._prepare_test_data(x, groups)
+        ppc = super().predict(x, n_samples, progressbar, point_estimate, **kwargs)
+        grp_count = dict((g, 0) for g in np.unique(groups))
+        grp_occurrences = []
+        for g in groups:
+            grp_occurrences.append(grp_count[g])
+            grp_count[g] += 1
+
+        pred = ppc[:, groups, grp_occurrences]
+        return pred
