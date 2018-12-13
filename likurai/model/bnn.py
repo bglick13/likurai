@@ -58,12 +58,16 @@ class BayesianNeuralNetwork(Model):
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False):
         self.x.set_value(x.astype(floatX))
-        try:
-            # For classification tasks
-            self.y.set_value(np.zeros((np.array(x).shape[0], self.y.get_value().shape[1])).astype(floatX))
-        except IndexError:
-            # For regression tasks
-            self.y.set_value(np.zeros((np.array(x).shape[0], 1)).astype(floatX))
+        if len(x.shape) == 3:
+            # Hierarchical model
+            self.y.set_value(np.zeros((np.array(x).shape[0], x.shape[1], self.y.get_value().shape[2])))
+        else:
+            try:
+                # For classification tasks
+                self.y.set_value(np.zeros((np.array(x).shape[0], self.y.get_value().shape[1])).astype(floatX))
+            except IndexError:
+                # For regression tasks
+                self.y.set_value(np.zeros((np.array(x).shape[0], 1)).astype(floatX))
 
         with self.model:
             ppc = None
