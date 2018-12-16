@@ -6,21 +6,21 @@ from keras.datasets import mnist
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import classification_report
 from keras import layers
-from keras.models import Sequential
+from keras.models import Sequential, save_model, load_model
 from keras import backend as K
 
 
 def make_keras_model():
     print(K.image_data_format())
     model = Sequential()
-    model.add(layers.Conv2D(32, kernel_size=(3, 3),
+    model.add(layers.Conv2D(4, kernel_size=(3, 3),
                      activation='relu',
                      data_format='channels_first',
                      input_shape=(1, 28, 28)))
-    model.add(layers.Conv2D(64, (3, 3), activation='relu', data_format='channels_first'))
+    model.add(layers.Conv2D(8, (3, 3), activation='relu', data_format='channels_first'))
     model.add(layers.MaxPooling2D(pool_size=(2, 2)))
     model.add(layers.Flatten())
-    model.add(layers.Dense(128, activation='relu'))
+    model.add(layers.Dense(8, activation='relu'))
     model.add(layers.Dense(10, activation='softmax'))
 
     model.compile(loss='categorical_crossentropy',
@@ -49,11 +49,15 @@ def load_data():
 if __name__ == '__main__':
     img_rows, img_cols = 28, 28
     x_train, y_train, x_test, y_test = load_data()
-    y_train = OneHotEncoder().fit_transform(y_train.reshape(-1, 1))
-    y_test = OneHotEncoder().fit_transform(y_test.reshape(-1, 1))
+    y_train = OneHotEncoder(sparse=False).fit_transform(y_train.reshape(-1, 1))
+    y_test = OneHotEncoder(sparse=False).fit_transform(y_test.reshape(-1, 1))
 
+    # try:
+    #     model = load_model('informative_prior_keras.h5')
+    # except:
     model = make_keras_model()
-    model.fit(x_train, y_train, epochs=25, batch_size=128)
+    model.fit(x_train, y_train, epochs=10, batch_size=128)
+    save_model(model, 'informative_prior_keras.h5')
 
     # Initialize a model object
     bnn = BayesianNeuralNetwork()
@@ -62,20 +66,20 @@ if __name__ == '__main__':
 
     # Create our first layer (Input -> Hidden1). We specify the priors for the weights/bias in the kwargs
     with bnn.model:
-        input_layer = BayesianConv2D('input', filters=32, channels=1, mu=model.layers[0].get_weights()[0],
+        input_layer = BayesianConv2D('input', filters=4, channels=1, mu=model.layers[0].get_weights()[0],
                                      activation='relu', filter_size=(3, 3))(bnn.x)
 
         # # Create a hidden layer. We can also specify the shapes for the weights/bias in the kwargs
-        hidden_layer_1 = BayesianConv2D('hidden1', filters=64, channels=32,
+        hidden_layer_1 = BayesianConv2D('hidden1', filters=8, channels=4,
                                         mu=model.layers[1].get_weights()[0], activation='relu',
                                         filter_size=(3, 3))(input_layer)
 
         pool = MaxPooling2D((2, 2))(hidden_layer_1)
         flatten = Flatten()(pool)
-        dense = BayesianDense('dense_hidden', neurons=128, input_size=54, mu=model.layers[4].get_weights()[0], activation='relu')(flatten)
+        dense = BayesianDense('dense_hidden', neurons=8, input_size=1152, mu=model.layers[4].get_weights()[0], activation='relu')(flatten)
 
         # Create our output layer
-        output_layer = BayesianDense('output', neurons=10, input_size=128, mu=model.layers[5].get_weights()[0], activation='softmax')(dense)
+        output_layer = BayesianDense('output', neurons=10, input_size=8, mu=model.layers[5].get_weights()[0], activation='softmax')(dense)
 
         likelihood = Likelihood('Multinomial', 'p')(output_layer, **{'observed': bnn.y, 'n': 1, 'jitter': 1.0e-7})
 
@@ -83,7 +87,7 @@ if __name__ == '__main__':
     # bnn.fit(X_train, y_train_one_hot, epochs=300, method='nuts', **{'tune': 1000, 'njobs': 1, 'chains': 1,
     #                                                                 'init': 'adapt_diag'})
 
-    bnn.fit(x_train, y_train, epochs=10000, method='svgd', batch_size=32)
+    bnn.fit(x_train, y_train, epochs=10000, method='svgd', batch_size=16)
     bnn.save_model('mnist_informative.pickle')
 
     # Generate predictions
