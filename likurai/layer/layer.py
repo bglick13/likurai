@@ -155,7 +155,7 @@ class HierarchicalBayesianDense(Layer):
         raw_shape = (self.n_groups, self.input_size, self.neurons)
 
         self.weights_grp = pm.Normal('{}_weights_grp'.format(self.name), mu=self.mu, sd=self.sd, shape=shape)
-        self.weights_sd = pm.HalfNormal('{}_sd'.format(self.name), sd=1.)
+        self.weights_sd = pm.HalfCauchy('{}_sd'.format(self.name), beta=1.)
         self.weights_raw = pm.Normal('{}_weights_raw'.format(self.name), mu=0., sd=self.sd, shape=raw_shape)
         self.weights = self.weights_raw * self.weights_sd + self.weights_grp
         if self.use_bias:

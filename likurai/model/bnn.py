@@ -60,7 +60,7 @@ class BayesianNeuralNetwork(Model):
         self.x.set_value(x.astype(floatX))
         if len(x.shape) == 3:
             # Hierarchical model
-            self.y.set_value(np.zeros((np.array(x).shape[0], x.shape[1], self.y.get_value().shape[2])))
+            self.y.set_value(np.zeros((np.array(x).shape[0], x.shape[1], self.y.get_value().shape[2])).astype(floatX))
         else:
             try:
                 # For classification tasks
@@ -94,7 +94,7 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
     def __init__(self):
         super().__init__()
 
-    def _prepare_train_data(self, x, y, groups):
+    def prepare_train_data(self, x, y, groups):
         Xs, Ys = [], []
         min_len = np.inf
         for i in np.unique(groups):
@@ -117,7 +117,7 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
         y = np.stack(Yss)
         return x, y
 
-    def _prepare_test_data(self, x, groups):
+    def prepare_test_data(self, x, groups):
         Xs = []
         max_len = 0
         for i in np.unique(groups):
@@ -138,13 +138,21 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
         return x
 
     def fit(self, x, y, epochs=30000, method='advi', batch_size=128, n_models=1, **sample_kwargs):
-        groups = sample_kwargs.pop('groups')
-        x, y = self._prepare_train_data(x, y, groups)
+        """
+        X, y should already be formatted into extra dimension for groups
+        :param x:
+        :param y:
+        :param epochs:
+        :param method:
+        :param batch_size:
+        :param n_models:
+        :param sample_kwargs:
+        :return:
+        """
         super().fit(x, y, epochs, method, batch_size, n_models, **sample_kwargs)
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False, **kwargs):
         groups = kwargs.pop('groups')
-        x = self._prepare_test_data(x, groups)
         ppc = super().predict(x, n_samples, progressbar, point_estimate, **kwargs)
         grp_count = dict((g, 0) for g in np.unique(groups))
         grp_occurrences = []
@@ -152,5 +160,6 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
             grp_occurrences.append(grp_count[g])
             grp_count[g] += 1
 
+        print(grp_occurrences)
         pred = ppc[:, groups, grp_occurrences]
         return pred
