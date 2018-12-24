@@ -28,7 +28,7 @@ class Layer:
 
 
 class Likelihood(Layer):
-    def __init__(self, dist: str, connected_param, **kwargs):
+    def __init__(self, dist: str, connected_param, total_size, **kwargs):
         """
         Creates rhe likelihood distribution that the model is conditioned on
         :param dist: str - the type of distribution the observed data follows
@@ -40,6 +40,7 @@ class Likelihood(Layer):
         self.name = 'likelihood'
         self.dist = getattr(pm, dist)
         self.connected_param = connected_param
+        self.total_size = total_size
 
     def __call__(self, *args, **kwargs):
         if 'concat_axis' in kwargs:
@@ -62,8 +63,7 @@ class Likelihood(Layer):
             elif isinstance(value, (float, int)):
                 _params[key] = value
         observed = kwargs.pop('observed')
-        total_size = len(observed.get_value())
-        likelihood = self.dist('likelihood', observed=observed, total_size=total_size, **_params)
+        likelihood = self.dist('likelihood', observed=observed, total_size=self.total_size, **_params)
 
 
 class BayesianDense(Layer):

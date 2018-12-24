@@ -21,8 +21,8 @@ class BayesianNeuralNetwork(Model):
 
         # Other model variables
         self.model = pm.Model()
+        self.inference = []
         self.trace = []
-        self.approx = []
 
     def fit(self, x, y, epochs=30000, method='advi', batch_size=128, n_models=1, **sample_kwargs):
         """
@@ -47,14 +47,21 @@ class BayesianNeuralNetwork(Model):
                 mini_x = pm.Minibatch(x, batch_size=batch_size, dtype=floatX)
                 mini_y = pm.Minibatch(y, batch_size=batch_size, dtype=floatX)
 
-                if method == 'advi':
-                    inference = pm.ADVI()
-                elif method == 'svgd':
-                    inference = pm.SVGD()
-                for _ in range(n_models):
-                    approx = pm.fit(n=epochs, method=inference, more_replacements={self.x: mini_x, self.y: mini_y}, **sample_kwargs)
-                    self.trace.append(approx.sample(draws=20000))
-                    self.approx.append(approx)
+                if len(self.inference) == 0:
+                    for _ in range(n_models):
+                        if method == 'advi':
+                            self.inference.append(pm.ADVI())
+                        elif method == 'svgd':
+                            self.inference.append(pm.SVGD(n_particles=100))
+
+                        approx = self.inference[_].fit(epochs, more_replacements={self.x: mini_x, self.y: mini_y}, **sample_kwargs)
+                        # approx = pm.fit(n=epochs, method=inference, more_replacements={self.x: mini_x, self.y: mini_y}, **sample_kwargs)
+                        self.trace.append(approx.sample(draws=10000))
+                else:
+                    print("Pre-trained model - refining fit")
+                    for i, inf in enumerate(self.inference):
+                        inf.refine(epochs)
+                        self.trace[i] = inf.approx.sample(draws=10000)
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False, **kwargs):
         self.x.set_value(x.astype(floatX))
@@ -83,11 +90,11 @@ class BayesianNeuralNetwork(Model):
 
     def save_model(self, filepath):
         with open(filepath, 'wb') as f:
-            pickle.dump([self.model, self.trace, self.x, self.y, self.train_x, self.train_y], f)
+            pickle.dump([self.model, self.inference, self.trace, self.x, self.y, self.train_x, self.train_y], f)
 
     def load_model(self, filepath):
         with open(filepath, 'rb') as f:
-            self.model, self.trace, self.x, self.y, self.train_x, self.train_y = pickle.load(f)
+            self.model, self.inference, self.trace, self.x, self.y, self.train_x, self.train_y = pickle.load(f)
 
 
 class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
