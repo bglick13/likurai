@@ -10,80 +10,210 @@ import pickle
 from .. import floatX
 import tensorflow as tf
 import tensorflow_probability as tfp
+from tensorflow_probability.python.layers.util import default_mean_field_normal_fn
+from tensorflow.python.saved_model import tag_constants
+from functools import partial
 
 
 class TFPNetwork(Model):
-    def __init__(self, x, y, n_hidden, hidden_size, output_size):
+    def __init__(self, filepath):
         super().__init__()
 
-        self.graph = tf.Graph()
-        with self.graph.as_default():
-            self.x = tf.placeholder(tf.float32, shape=[None, x.shape[1]], name='x')
-            self.y = tf.placeholder(tf.float32, shape=[None, y.shape[1]], name='y')
-            self.batch_size = tf.placeholder(tf.int64, name='batch_size')
+        self.filepath = filepath
 
-            self.train_dataset = tf.data.Dataset.from_tensor_slices((self.x, self.y)).shuffle(10000).batch(self.batch_size).repeat()
-            self.test_dataset = tf.data.Dataset.from_tensor_slices((self.x, self.y)).batch(self.batch_size).repeat()
+    def build_model(self, x, y, n_hidden, hidden_size, learning_rate):
+        with tf.Graph().as_default() as graph:
+            with tf.Session(graph=graph) as sess:
+                x_ph = tf.placeholder(tf.float32, shape=[None, x.shape[1]], name='x')
+                y_ph = tf.placeholder(tf.float32, shape=[None], name='y')
+                batch_size = tf.placeholder(tf.int64, name='batch_size')
 
-            self.iter = tf.data.Iterator.from_structure(self.train_dataset.output_types, self.train_dataset.output_shapes)
-            self.features, self.labels = self.iter.get_next()
+                train_dataset = tf.data.Dataset.from_tensor_slices((x_ph, y_ph)).shuffle(10000).batch(
+                    batch_size).repeat()
+                test_dataset = tf.data.Dataset.from_tensor_slices((x_ph, y_ph)).batch(batch_size).repeat()
 
-            self.train_init_op = self.iter.make_initializer(self.train_dataset, name='train_dataset_init')
-            self.test_init_op = self.iter.make_initializer(self.test_dataset, name='test_dataset_init')
+                iter = tf.data.Iterator.from_structure(train_dataset.output_types, train_dataset.output_shapes)
+                features, labels = iter.get_next()
 
-            model = tf.keras.Sequential()
-            for i in range(n_hidden):
-                model.add(tfp.layers.DenseFlipout(hidden_size, activation=tf.nn.relu, name='layer_{}'.format(i)))
-            model.add(tfp.layers.DenseFlipout(output_size, name='output'))
-            self.model = model
-            self.logits = self.model(self.features)
-            self.labels_distribution = tfp.distributions.Normal(loc=self.logits, scale=1.0)
+                train_init_op = iter.make_initializer(train_dataset, name='train_dataset_init')
+                test_init_op = iter.make_initializer(test_dataset, name='test_dataset_init')
 
-            neg_log_likelihood = -tf.reduce_mean(self.labels_distribution.log_prob(self.labels))
-            kl = sum(model.losses) / len(y)
-            self.elbo_loss = neg_log_likelihood + kl
-            self.predictions = tf.identity(self.logits, name='prediction')
-            self.accuracy, self.accuracy_update_op = tf.metrics.mean_absolute_error(labels=self.labels,
-                                                                                    predictions=self.predictions)
+                posterior_fn = partial(default_mean_field_normal_fn,
+                                       **{'loc_initializer':tf.random_normal_initializer(stddev=1.0),
+                                          'untransformed_scale_initializer': tf.random_normal_initializer(mean=0., stddev=1.0)})
 
-            optimizer = tf.train.AdamOptimizer(0.001)
-            self.train_op = optimizer.minimize(self.elbo_loss)
+                input = tf.keras.Input(shape=(x.shape[1], ))
+                h = input
+                for i in range(n_hidden):
+                    h = tfp.layers.DenseFlipout(hidden_size // np.power(2, (i+1)), activation=tf.nn.relu, name='layer_{}'.format(i),
+                                                kernel_posterior_fn=default_mean_field_normal_fn(
+                                                    loc_initializer=tf.random_normal_initializer(stddev=1.0),
+                                                    # untransformed_scale_initializer=tf.random_normal_initializer(mean=0., stddev=1.0)
+                                                ))(h)
+                loc_hidden = tfp.layers.DenseFlipout(hidden_size // np.power(2, (n_hidden)), name='loc_hidden_0', activation=tf.nn.relu,
+                                                     kernel_posterior_fn=default_mean_field_normal_fn(
+                                                         loc_initializer=tf.random_normal_initializer(stddev=1.0),
+                                                         # untransformed_scale_initializer=tf.random_normal_initializer(
+                                                         #     mean=0., stddev=1.0)
 
-            self.init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
+                                                     ))(h)
+                # loc_hidden = tfp.layers.DenseFlipout(6, name='loc_hidden_1')(loc_hidden)
+                scale_hidden = tfp.layers.DenseFlipout(hidden_size // np.power(2, (i+1)), name='scale_hidden_0', activation=tf.nn.tanh,
+                                                       kernel_posterior_fn=default_mean_field_normal_fn(
+                                                           loc_initializer=tf.random_normal_initializer(stddev=1.0),
+                                                           # untransformed_scale_initializer=tf.random_normal_initializer(
+                                                           #     mean=0., stddev=1.0)
 
-    def fit(self, x, y, epochs, batch_size):
+                                                       ))(h)
+                # scale_hidden = tfp.layers.DenseFlipout(6, name='scale_hidden_1')(scale_hidden)
+
+                loc_output = tfp.layers.DenseFlipout(1, name='loc_output')(loc_hidden)
+                scale_output = tfp.layers.DenseFlipout(1, name='scale_output', activation=tf.nn.softplus)(scale_hidden)
+                # output = tfp.layers.DenseFlipout(1, name='output')(h)
+                model = tf.keras.Model(inputs=input, outputs=[loc_output, scale_output])
+                model.summary()
+
+                _loc, _scale = model(features)
+                # _loc = model(features)
+                labels_distribution = tfp.distributions.Laplace(loc=_loc, scale=_scale)
+
+                # for i in range(n_hidden):
+                #     model.add(tfp.layers.DenseFlipout(hidden_size, activation=tf.nn.relu, name='layer_{}'.format(i),
+                #                                       bias_prior_fn=tfp.layers.default_multivariate_normal_fn))
+                # model.add(tfp.layers.DenseFlipout(2, name='output'))
+                # logits = model(features)
+                # labels_distribution = tfp.distributions.Laplace(loc=logits, scale=0.73)
+                # labels_distribution = tfp.distributions.Categorical(logits=logits)
+                label_probs = labels_distribution.sample(name='label_probs')
+
+                neg_log_likelihood = -tf.reduce_mean(labels_distribution.log_prob(labels))
+                kl = sum(model.losses) / len(y)
+                elbo_loss = neg_log_likelihood + kl
+                elbo_loss = tf.identity(elbo_loss, name='elbo_loss')
+                # predictions = tf.argmax(_loc, axis=1, name='prediction')
+                predictions = tf.reduce_mean(_loc, axis=1, name='prediction')
+                # accuracy, accuracy_update_op = tf.metrics.accuracy(labels=labels,
+                #                                                    predictions=predictions,
+                #                                                    name='accuracy')
+                accuracy, accuracy_update_op = tf.metrics.mean_absolute_error(labels=labels,
+                                                                              predictions=predictions,
+                                                                              name='accuracy')
+
+                optimizer = tf.train.AdamOptimizer(learning_rate)
+                train_op = optimizer.minimize(elbo_loss, name='train_op')
+
+                init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer(), name='init_op')
+                sess.run(init_op)
+                inputs = {
+                    "batch_size": batch_size,
+                    "features": features,
+                    "labels": labels,
+                }
+                outputs = {"prediction": predictions}
+                tf.saved_model.simple_save(
+                    sess, '{}/{}'.format(self.filepath, 'build'), inputs, outputs
+                )
+
+    def fit(self, x, y, epochs, batch_size, val_x=None, val_y=None, val_batch=None):
         n_batches = (len(x) // batch_size) + 1
+        with tf.Graph().as_default() as graph:
+            with tf.Session(graph=graph) as sess:
+                tf.saved_model.loader.load(
+                    sess,
+                    [tag_constants.SERVING],
+                    '{}/{}'.format(self.filepath, 'build')
+                )
+                # Get restored placeholders
+                labels_data_ph = graph.get_tensor_by_name('y:0')
+                features_data_ph = graph.get_tensor_by_name('x:0')
+                batch_size_ph = graph.get_tensor_by_name('batch_size:0')
+                # Get restored model output
+                restored_logits = graph.get_tensor_by_name('prediction:0')
+                train_op = graph.get_operation_by_name('train_op')
+                accuracy_update_op = graph.get_tensor_by_name('accuracy/update_op:0')
+                accuracy = graph.get_tensor_by_name('accuracy/value:0')
+                elbo_loss = graph.get_tensor_by_name('elbo_loss:0')
+                # Get dataset initializing operation
+                dataset_init_op = graph.get_operation_by_name('train_dataset_init')
+                test_init_op = graph.get_operation_by_name('test_dataset_init')
+                init_op = graph.get_operation_by_name('init_op')
+                sess.run(init_op)
+                sess.run(dataset_init_op, feed_dict={features_data_ph: x,
+                                                     labels_data_ph: y,
+                                                     batch_size_ph: batch_size})
 
-        with tf.Session(graph=self.graph) as sess:
-            sess.run(self.init_op)
-            for i in range(epochs):
-                total_loss = 0
-                sess.run(self.train_init_op, feed_dict={self.x: x, self.y: y, self.batch_size: batch_size})
-                for _ in range(n_batches):
-                    _, _, loss_value = sess.run([self.train_op, self.accuracy_update_op, self.elbo_loss])
-                    total_loss += loss_value
+                for i in range(epochs):
+                    # if val_x is not None:
+                    #     sess.run(dataset_init_op, feed_dict={features_data_ph: x,
+                    #                                          labels_data_ph: y,
+                    #                                          batch_size_ph: batch_size})
+                    total_loss = 0
+                    for _ in range(n_batches):
+                        _, _, loss_value = sess.run([train_op, accuracy_update_op, elbo_loss])
+                        total_loss += loss_value
+                    if i % 10 == 0:
+                        print("Predicted means/variance...")
+                        means = sess.run(restored_logits)
+                        print(means)
+                        print(np.std(means))
 
-                _, accuracy_value = sess.run([self.accuracy_update_op, self.accuracy])
-                print("Iter: {}, Loss: {:.4f}, MAE: {:.4f}".format(i, total_loss / n_batches, accuracy_value))
+                    _, accuracy_value = sess.run([accuracy_update_op, accuracy])
+                    print("Iter: {}, Loss: {:.4f}, MAE: {:.4f}".format(i, total_loss / n_batches, accuracy_value))
+                    # if val_x is not None:
+                    #     sess.run(test_init_op, feed_dict={features_data_ph: val_x,
+                    #                                       labels_data_ph: val_y,
+                    #                                       batch_size_ph: val_batch})
+                    #     _, val_accuracy = sess.run([accuracy_update_op, accuracy])
+                    #     print("VAL MAE: {:.4f}".format(val_accuracy))
 
-    def predict(self, X, batch_size=None, n_draws=1):
+                inputs = {
+                    "batch_size": batch_size_ph,
+                    "features": features_data_ph,
+                    "labels": labels_data_ph,
+                }
+                outputs = {"prediction": restored_logits}
+                tf.saved_model.simple_save(
+                    sess, '{}/{}'.format(self.filepath, 'fit'), inputs, outputs
+                )
+
+    def predict(self, X, y=None, batch_size=None, n_draws=1, sample=False):
         if batch_size is None:
             batch_size = len(X)
+        if y is None:
+            y = np.ones(len(X))
 
-        with tf.Session(graph=self.graph) as sess:
-            sess.run(self.init_op)
-            sess.run(self.test_init_op, feed_dict={self.x: X, self.y: np.ones((len(X), 1)), self.batch_size: batch_size})
-            pred = np.asarray([sess.run(self.predictions) for _ in range(n_draws)]).mean(axis=0)
+        with tf.Graph().as_default() as graph:
+            with tf.Session(graph=graph) as sess:
+                tf.saved_model.loader.load(
+                    sess,
+                    [tag_constants.SERVING],
+                    '{}/{}'.format(self.filepath, 'fit')
+                )
+                # Get restored placeholders
+                labels_data_ph = graph.get_tensor_by_name('y:0')
+                features_data_ph = graph.get_tensor_by_name('x:0')
+                batch_size_ph = graph.get_tensor_by_name('batch_size:0')
+                # Get restored model output
+                restored_logits = graph.get_tensor_by_name('prediction:0')
+                label_probs = graph.get_tensor_by_name('Laplace/label_probs/Reshape:0')
+                # Get dataset initializing operation
+                dataset_init_op = graph.get_operation_by_name('test_dataset_init')
+
+                # Initialize restored dataset
+                sess.run(
+                    dataset_init_op,
+                    feed_dict={
+                        features_data_ph: X,
+                        labels_data_ph: y,
+                        batch_size_ph: batch_size
+                    })
+                if sample:
+                    pred = np.asarray([sess.run(label_probs) for _ in range(n_draws)])
+                else:
+                    pred = np.asarray([sess.run(restored_logits) for _ in range(n_draws)])
 
         return pred
 
-    def save_model(self, filepath):
-        with tf.Session(graph=self.graph):
-            self.model.save_weights('{}'.format(filepath))
-
-    def load_model(self, filepath):
-        with tf.Session(graph=self.graph):
-            self.model.load_weights('{}'.format(filepath))
 
 class BayesianNeuralNetwork(Model):
     def __init__(self):
@@ -129,7 +259,8 @@ class BayesianNeuralNetwork(Model):
                         elif method == 'svgd':
                             self.inference.append(pm.SVGD(n_particles=100))
 
-                        approx = self.inference[_].fit(epochs, more_replacements={self.x: mini_x, self.y: mini_y}, **sample_kwargs)
+                        approx = self.inference[_].fit(epochs, more_replacements={self.x: mini_x, self.y: mini_y},
+                                                       **sample_kwargs)
                         # approx = pm.fit(n=epochs, method=inference, more_replacements={self.x: mini_x, self.y: mini_y}, **sample_kwargs)
                         self.trace.append(approx.sample(draws=10000))
                 else:
