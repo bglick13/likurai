@@ -77,13 +77,6 @@ class TFPNetwork(Model):
                 # _loc = model(features)
                 labels_distribution = tfp.distributions.Laplace(loc=_loc, scale=_scale)
 
-                # for i in range(n_hidden):
-                #     model.add(tfp.layers.DenseFlipout(hidden_size, activation=tf.nn.relu, name='layer_{}'.format(i),
-                #                                       bias_prior_fn=tfp.layers.default_multivariate_normal_fn))
-                # model.add(tfp.layers.DenseFlipout(2, name='output'))
-                # logits = model(features)
-                # labels_distribution = tfp.distributions.Laplace(loc=logits, scale=0.73)
-                # labels_distribution = tfp.distributions.Categorical(logits=logits)
                 label_probs = labels_distribution.sample(name='label_probs')
 
                 neg_log_likelihood = -tf.reduce_mean(labels_distribution.log_prob(labels))
@@ -143,10 +136,10 @@ class TFPNetwork(Model):
                                                      batch_size_ph: batch_size})
 
                 for i in range(epochs):
-                    # if val_x is not None:
-                    #     sess.run(dataset_init_op, feed_dict={features_data_ph: x,
-                    #                                          labels_data_ph: y,
-                    #                                          batch_size_ph: batch_size})
+                    if val_x is not None:
+                        sess.run(dataset_init_op, feed_dict={features_data_ph: x,
+                                                             labels_data_ph: y,
+                                                             batch_size_ph: batch_size})
                     total_loss = 0
                     for _ in range(n_batches):
                         _, _, loss_value = sess.run([train_op, accuracy_update_op, elbo_loss])
@@ -159,12 +152,12 @@ class TFPNetwork(Model):
 
                     _, accuracy_value = sess.run([accuracy_update_op, accuracy])
                     print("Iter: {}, Loss: {:.4f}, MAE: {:.4f}".format(i, total_loss / n_batches, accuracy_value))
-                    # if val_x is not None:
-                    #     sess.run(test_init_op, feed_dict={features_data_ph: val_x,
-                    #                                       labels_data_ph: val_y,
-                    #                                       batch_size_ph: val_batch})
-                    #     _, val_accuracy = sess.run([accuracy_update_op, accuracy])
-                    #     print("VAL MAE: {:.4f}".format(val_accuracy))
+                    if val_x is not None:
+                        sess.run(test_init_op, feed_dict={features_data_ph: val_x,
+                                                          labels_data_ph: val_y,
+                                                          batch_size_ph: val_batch})
+                        _, val_accuracy = sess.run([accuracy_update_op, accuracy])
+                        print("VAL MAE: {:.4f}".format(val_accuracy))
 
                 inputs = {
                     "batch_size": batch_size_ph,
@@ -247,7 +240,11 @@ class BayesianNeuralNetwork(Model):
                 # self.x.set_value(x)
                 # self.y.set_value(y)
                 for _ in range(n_models):
-                    self.trace.append(pm.sample(epochs, **sample_kwargs))
+                    if len(self.trace) > 0:
+                        trace = self.trace[0]
+                    else:
+                        trace = None
+                    self.trace.append(pm.sample(epochs, trace=trace, **sample_kwargs))
             else:
                 mini_x = pm.Minibatch(x, batch_size=batch_size, dtype=floatX)
                 mini_y = pm.Minibatch(y, batch_size=batch_size, dtype=floatX)
@@ -373,6 +370,5 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
             grp_occurrences.append(grp_count[g])
             grp_count[g] += 1
 
-        print(grp_occurrences)
         pred = ppc[:, groups, grp_occurrences]
         return pred
