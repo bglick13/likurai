@@ -13,6 +13,7 @@ import tensorflow_probability as tfp
 from tensorflow_probability.python.layers.util import default_mean_field_normal_fn
 from tensorflow.python.saved_model import tag_constants
 from functools import partial
+import shutil
 
 
 class TFPNetwork(Model):
@@ -21,7 +22,7 @@ class TFPNetwork(Model):
 
         self.filepath = filepath
 
-    def build_model(self, x, y, n_hidden, hidden_size, learning_rate):
+    def build_model(self, x, y, n_hidden, hidden_size, learning_rate, overwrite=True):
         with tf.Graph().as_default() as graph:
             with tf.Session(graph=graph) as sess:
                 x_ph = tf.placeholder(tf.float32, shape=[None, x.shape[1]], name='x')
@@ -38,44 +39,28 @@ class TFPNetwork(Model):
                 train_init_op = iter.make_initializer(train_dataset, name='train_dataset_init')
                 test_init_op = iter.make_initializer(test_dataset, name='test_dataset_init')
 
-                posterior_fn = partial(default_mean_field_normal_fn,
-                                       **{'loc_initializer':tf.random_normal_initializer(stddev=1.0),
-                                          'untransformed_scale_initializer': tf.random_normal_initializer(mean=0., stddev=1.0)})
-
-                input = tf.keras.Input(shape=(x.shape[1], ))
+                input = tf.keras.Input(shape=(x.shape[1],))
                 h = input
+                layers = [h]
                 for i in range(n_hidden):
-                    h = tfp.layers.DenseFlipout(hidden_size // np.power(2, (i+1)), activation=tf.nn.relu, name='layer_{}'.format(i),
+                    h = tfp.layers.DenseFlipout(hidden_size // np.power(2, i), activation=tf.nn.relu,
+                                                name='layer_{}'.format(i),
                                                 kernel_posterior_fn=default_mean_field_normal_fn(
                                                     loc_initializer=tf.random_normal_initializer(stddev=1.0),
-                                                    # untransformed_scale_initializer=tf.random_normal_initializer(mean=0., stddev=1.0)
                                                 ))(h)
-                loc_hidden = tfp.layers.DenseFlipout(hidden_size // np.power(2, (n_hidden)), name='loc_hidden_0', activation=tf.nn.relu,
+                    layers.append(h)
+                    h = tf.keras.layers.Concatenate()(layers)
+
+                loc_output = tfp.layers.DenseFlipout(1, name='loc_output',
                                                      kernel_posterior_fn=default_mean_field_normal_fn(
                                                          loc_initializer=tf.random_normal_initializer(stddev=1.0),
-                                                         # untransformed_scale_initializer=tf.random_normal_initializer(
-                                                         #     mean=0., stddev=1.0)
-
                                                      ))(h)
-                # loc_hidden = tfp.layers.DenseFlipout(6, name='loc_hidden_1')(loc_hidden)
-                scale_hidden = tfp.layers.DenseFlipout(hidden_size // np.power(2, (i+1)), name='scale_hidden_0', activation=tf.nn.tanh,
-                                                       kernel_posterior_fn=default_mean_field_normal_fn(
-                                                           loc_initializer=tf.random_normal_initializer(stddev=1.0),
-                                                           # untransformed_scale_initializer=tf.random_normal_initializer(
-                                                           #     mean=0., stddev=1.0)
-
-                                                       ))(h)
-                # scale_hidden = tfp.layers.DenseFlipout(6, name='scale_hidden_1')(scale_hidden)
-
-                loc_output = tfp.layers.DenseFlipout(1, name='loc_output')(loc_hidden)
-                scale_output = tfp.layers.DenseFlipout(1, name='scale_output', activation=tf.nn.softplus)(scale_hidden)
-                # output = tfp.layers.DenseFlipout(1, name='output')(h)
-                model = tf.keras.Model(inputs=input, outputs=[loc_output, scale_output])
+                model = tf.keras.Model(inputs=input, outputs=loc_output)
                 model.summary()
 
-                _loc, _scale = model(features)
+                _loc = model(features)
                 # _loc = model(features)
-                labels_distribution = tfp.distributions.Laplace(loc=_loc, scale=_scale)
+                labels_distribution = tfp.distributions.Normal(loc=_loc, scale=0.5)
 
                 label_probs = labels_distribution.sample(name='label_probs')
 
@@ -103,19 +88,30 @@ class TFPNetwork(Model):
                     "labels": labels,
                 }
                 outputs = {"prediction": predictions}
+                if overwrite:
+                    shutil.rmtree('{}/{}'.format(self.filepath, 'build'), ignore_errors=True)
+
                 tf.saved_model.simple_save(
                     sess, '{}/{}'.format(self.filepath, 'build'), inputs, outputs
                 )
 
-    def fit(self, x, y, epochs, batch_size, val_x=None, val_y=None, val_batch=None):
+    def fit(self, x, y, epochs, batch_size, val_x=None, val_y=None, val_batch=None, overwrite=True):
         n_batches = (len(x) // batch_size) + 1
         with tf.Graph().as_default() as graph:
             with tf.Session(graph=graph) as sess:
-                tf.saved_model.loader.load(
-                    sess,
-                    [tag_constants.SERVING],
-                    '{}/{}'.format(self.filepath, 'build')
-                )
+                try:
+                    tf.saved_model.loader.load(
+                        sess,
+                        [tag_constants.SERVING],
+                        '{}/{}'.format(self.filepath, 'fit')
+                    )
+                    print("Successfully loaded checkpoint")
+                except:
+                    tf.saved_model.loader.load(
+                        sess,
+                        [tag_constants.SERVING],
+                        '{}/{}'.format(self.filepath, 'build')
+                    )
                 # Get restored placeholders
                 labels_data_ph = graph.get_tensor_by_name('y:0')
                 features_data_ph = graph.get_tensor_by_name('x:0')
@@ -147,7 +143,7 @@ class TFPNetwork(Model):
                     if i % 10 == 0:
                         print("Predicted means/variance...")
                         means = sess.run(restored_logits)
-                        print(means)
+                        print(np.round(means, 3))
                         print(np.std(means))
 
                     _, accuracy_value = sess.run([accuracy_update_op, accuracy])
@@ -165,6 +161,8 @@ class TFPNetwork(Model):
                     "labels": labels_data_ph,
                 }
                 outputs = {"prediction": restored_logits}
+                if overwrite:
+                    shutil.rmtree('{}/{}'.format(self.filepath, 'fit'), ignore_errors=True)
                 tf.saved_model.simple_save(
                     sess, '{}/{}'.format(self.filepath, 'fit'), inputs, outputs
                 )
@@ -188,7 +186,7 @@ class TFPNetwork(Model):
                 batch_size_ph = graph.get_tensor_by_name('batch_size:0')
                 # Get restored model output
                 restored_logits = graph.get_tensor_by_name('prediction:0')
-                label_probs = graph.get_tensor_by_name('Laplace/label_probs/Reshape:0')
+                label_probs = graph.get_tensor_by_name('Normal/label_probs/Reshape:0')
                 # Get dataset initializing operation
                 dataset_init_op = graph.get_operation_by_name('test_dataset_init')
 
@@ -219,8 +217,9 @@ class BayesianNeuralNetwork(Model):
 
         # Other model variables
         self.model = pm.Model()
-        self.inference = []
-        self.trace = []
+        self.inference = None
+        self.trace = None
+        self.total_train_runs = 0
 
     def fit(self, x, y, epochs=30000, method='advi', batch_size=128, n_models=1, **sample_kwargs):
         """
@@ -237,34 +236,33 @@ class BayesianNeuralNetwork(Model):
         self.train_y = y
         with self.model:
             if method == 'nuts':
-                # self.x.set_value(x)
-                # self.y.set_value(y)
+                self.x.set_value(x.astype(floatX))
+                self.y.set_value(y.astype(floatX))
                 for _ in range(n_models):
-                    if len(self.trace) > 0:
-                        trace = self.trace[0]
+                    if self.trace is not None:
+                        trace = self.trace
                     else:
                         trace = None
-                    self.trace.append(pm.sample(epochs, trace=trace, **sample_kwargs))
+                    self.trace = pm.sample(epochs, trace=trace, **sample_kwargs)
             else:
                 mini_x = pm.Minibatch(x, batch_size=batch_size, dtype=floatX)
                 mini_y = pm.Minibatch(y, batch_size=batch_size, dtype=floatX)
 
-                if len(self.inference) == 0:
-                    for _ in range(n_models):
-                        if method == 'advi':
-                            self.inference.append(pm.ADVI())
-                        elif method == 'svgd':
-                            self.inference.append(pm.SVGD(n_particles=100))
+                if self.inference is None:
+                    if method == 'advi':
+                        self.inference = pm.ADVI()
+                    elif method == 'svgd':
+                        self.inference = pm.SVGD(n_particles=100)
 
-                        approx = self.inference[_].fit(epochs, more_replacements={self.x: mini_x, self.y: mini_y},
-                                                       **sample_kwargs)
-                        # approx = pm.fit(n=epochs, method=inference, more_replacements={self.x: mini_x, self.y: mini_y}, **sample_kwargs)
-                        self.trace.append(approx.sample(draws=10000))
+                    approx = self.inference.fit(epochs, more_replacements={self.x: mini_x, self.y: mini_y},
+                                                **sample_kwargs)
+                    self.trace = approx.sample(draws=10000)
                 else:
                     print("Pre-trained model - refining fit")
-                    for i, inf in enumerate(self.inference):
-                        inf.refine(epochs)
-                        self.trace[i] = inf.approx.sample(draws=10000)
+
+                    self.inference.refine(epochs)
+                    self.trace = self.inference.approx.sample(draws=10000)
+        self.total_train_runs += epochs
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False, **kwargs):
         self.x.set_value(x.astype(floatX))
@@ -280,24 +278,19 @@ class BayesianNeuralNetwork(Model):
                 self.y.set_value(np.zeros((np.array(x).shape[0], 1)).astype(floatX))
 
         with self.model:
-            ppc = None
-            for trace in self.trace:
-                _ppc = pm.sample_ppc(trace, samples=n_samples, progressbar=progressbar)['likelihood']
-                if ppc is None:
-                    ppc = _ppc
-                else:
-                    ppc = np.vstack((ppc, _ppc))
+            ppc = pm.sample_ppc(self.trace, samples=n_samples, progressbar=progressbar)['likelihood']
+
         if point_estimate:
             return np.mean(ppc, axis=0)
         return ppc
 
     def save_model(self, filepath):
         with open(filepath, 'wb') as f:
-            pickle.dump([self.model, self.inference, self.trace, self.x, self.y, self.train_x, self.train_y], f)
+            pickle.dump([self.model, self.total_train_runs, self.inference, self.trace, self.x, self.y, self.train_x, self.train_y], f)
 
     def load_model(self, filepath):
         with open(filepath, 'rb') as f:
-            self.model, self.inference, self.trace, self.x, self.y, self.train_x, self.train_y = pickle.load(f)
+            self.model, self.total_train_runs, self.inference, self.trace, self.x, self.y, self.train_x, self.train_y = pickle.load(f)
 
 
 class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
@@ -328,13 +321,18 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
         return x, y
 
     def prepare_test_data(self, x, groups):
+        original_indexes = np.array([i for i in range(len(x))])
+        max_idx = len(x)
         Xs = []
+        Idxs = []
         max_len = 0
         for i in np.unique(groups):
             X = np.array(x[groups == i]).astype(float)
+            idx = np.array(original_indexes[groups == i])
             if len(X) > max_len:
                 max_len = len(X)
             Xs.append(X)
+            Idxs.append(idx)
 
         Xss = []
         mask_idxs = []
@@ -345,7 +343,7 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
             Xss.append(_x)
 
         x = np.stack(Xss)
-        return x
+        return x, Idxs, max_idx
 
     def fit(self, x, y, epochs=30000, method='advi', batch_size=128, n_models=1, **sample_kwargs):
         """
@@ -363,12 +361,24 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False, **kwargs):
         groups = kwargs.pop('groups')
+        idxs = kwargs.pop('idxs')
+        max_idx = kwargs.pop('max_idx')
         ppc = super().predict(x, n_samples, progressbar, point_estimate, **kwargs)
-        grp_count = dict((g, 0) for g in np.unique(groups))
-        grp_occurrences = []
-        for g in groups:
-            grp_occurrences.append(grp_count[g])
-            grp_count[g] += 1
+        out = np.empty((n_samples, max_idx))
 
-        pred = ppc[:, groups, grp_occurrences]
-        return pred
+        # For each group
+        for grp, idxs_of_group in enumerate(idxs):
+            # i: the index in the group output, original_i: the original index in the flat input
+            for i, original_i in enumerate(idxs_of_group):
+                out[:, original_i] = ppc[:, grp, i].squeeze()
+        return out
+        # # Keeps track of how many times a sample from each group has appeared
+        # grp_count = dict((g, 0) for g in np.unique(groups))
+        # # Used to index the group occurrences into a flat array to return
+        # grp_occurrences = []
+        # for g in groups:
+        #     grp_occurrences.append(grp_count[g])
+        #     grp_count[g] += 1
+        #
+        # pred = ppc[:, groups, grp_occurrences]
+        # return pred
