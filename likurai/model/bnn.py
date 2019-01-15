@@ -21,8 +21,10 @@ class TFPNetwork(Model):
         super().__init__()
 
         self.filepath = filepath
+        self.save_path = None
+        self.graph = tf.Graph()
 
-    def build_model(self, x, y, n_hidden, hidden_size, learning_rate, overwrite=True):
+    def build_model(self, x, y, n_hidden, hidden_size, learning_rate, scale=1.0, overwrite=True, scale_param=False, dense=True):
         with tf.Graph().as_default() as graph:
             with tf.Session(graph=graph) as sess:
                 x_ph = tf.placeholder(tf.float32, shape=[None, x.shape[1]], name='x')
@@ -43,24 +45,42 @@ class TFPNetwork(Model):
                 h = input
                 layers = [h]
                 for i in range(n_hidden):
-                    h = tfp.layers.DenseFlipout(hidden_size // np.power(2, i), activation=tf.nn.relu,
-                                                name='layer_{}'.format(i),
+                    h = tfp.layers.DenseFlipout(hidden_size, # // np.power(2, i),
                                                 kernel_posterior_fn=default_mean_field_normal_fn(
                                                     loc_initializer=tf.random_normal_initializer(stddev=1.0),
-                                                ))(h)
-                    layers.append(h)
-                    h = tf.keras.layers.Concatenate()(layers)
+                                                ),
+                                                activation=tf.nn.relu,
+                                                name='layer_{}'.format(i))(h)
+                    if dense:
+                        layers.append(h)
+                        h = tf.keras.layers.Concatenate()(layers)
 
-                loc_output = tfp.layers.DenseFlipout(1, name='loc_output',
-                                                     kernel_posterior_fn=default_mean_field_normal_fn(
-                                                         loc_initializer=tf.random_normal_initializer(stddev=1.0),
-                                                     ))(h)
-                model = tf.keras.Model(inputs=input, outputs=loc_output)
+                if scale_param:
+                    loc_hidden = tfp.layers.DenseFlipout(6, activation=tf.nn.relu, name='loc_hidden')(h)
+                    scale_hidden = tfp.layers.DenseFlipout(6, activation=tf.nn.relu, name='scale_hidden')(h)
+                    loc_output = tfp.layers.DenseFlipout(1, name='loc_output')(loc_hidden)
+                    scale_output = tfp.layers.DenseFlipout(1, activation=tf.nn.relu, name='scale_output')(scale_hidden)
+                else:
+                    loc_output = tfp.layers.DenseFlipout(1,
+                                                         kernel_posterior_fn=default_mean_field_normal_fn(
+                                                             loc_initializer=tf.random_normal_initializer(stddev=1.0),
+                                                         ),
+                                                         name='loc_output')(h)
+
+                if scale_param:
+                    model = tf.keras.Model(inputs=input, outputs=[loc_output, scale_output])
+                else:
+                    model = tf.keras.Model(inputs=input, outputs=loc_output)
                 model.summary()
 
-                _loc = model(features)
-                # _loc = model(features)
-                labels_distribution = tfp.distributions.Normal(loc=_loc, scale=0.5)
+                if scale_param:
+                    _loc, _scale = model(features)
+                else:
+                    _loc = model(features)
+                if scale_param:
+                    labels_distribution = tfp.distributions.Normal(loc=_loc, scale=tf.add(_scale, 1.0e-6))
+                else:
+                    labels_distribution = tfp.distributions.StudentT(loc=_loc, scale=scale, df=1.0)
 
                 label_probs = labels_distribution.sample(name='label_probs')
 
@@ -80,8 +100,9 @@ class TFPNetwork(Model):
                 optimizer = tf.train.AdamOptimizer(learning_rate)
                 train_op = optimizer.minimize(elbo_loss, name='train_op')
 
-                init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer(), name='init_op')
-                sess.run(init_op)
+                global_init_op = tf.global_variables_initializer()
+                init_op = tf.group(tf.local_variables_initializer(), name='init_op')
+                sess.run([global_init_op, init_op])
                 inputs = {
                     "batch_size": batch_size,
                     "features": features,
@@ -89,7 +110,11 @@ class TFPNetwork(Model):
                 }
                 outputs = {"prediction": predictions}
                 if overwrite:
-                    shutil.rmtree('{}/{}'.format(self.filepath, 'build'), ignore_errors=True)
+                    shutil.rmtree('{}'.format(self.filepath), ignore_errors=True)
+
+                # saver = tf.train.Saver()
+                # self.save_path = saver.save(sess, '{}'.format(self.filepath))
+                # print("saved model to {}".format(self.save_path))
 
                 tf.saved_model.simple_save(
                     sess, '{}/{}'.format(self.filepath, 'build'), inputs, outputs
@@ -98,6 +123,8 @@ class TFPNetwork(Model):
     def fit(self, x, y, epochs, batch_size, val_x=None, val_y=None, val_batch=None, overwrite=True):
         n_batches = (len(x) // batch_size) + 1
         with tf.Graph().as_default() as graph:
+            # saver = tf.train.Saver()
+
             with tf.Session(graph=graph) as sess:
                 try:
                     tf.saved_model.loader.load(
@@ -107,6 +134,8 @@ class TFPNetwork(Model):
                     )
                     print("Successfully loaded checkpoint")
                 except:
+                    # saver.restore(sess, '{}/{}'.format(self.filepath, 'build'))
+
                     tf.saved_model.loader.load(
                         sess,
                         [tag_constants.SERVING],
@@ -163,6 +192,9 @@ class TFPNetwork(Model):
                 outputs = {"prediction": restored_logits}
                 if overwrite:
                     shutil.rmtree('{}/{}'.format(self.filepath, 'fit'), ignore_errors=True)
+
+                # self.save_path = saver.save(sess, '{}'.format(self.filepath))
+
                 tf.saved_model.simple_save(
                     sess, '{}/{}'.format(self.filepath, 'fit'), inputs, outputs
                 )
@@ -175,6 +207,9 @@ class TFPNetwork(Model):
 
         with tf.Graph().as_default() as graph:
             with tf.Session(graph=graph) as sess:
+                # saver = tf.train.Saver()
+                # saver.restore(sess, '{}'.format(self.save_path))
+
                 tf.saved_model.loader.load(
                     sess,
                     [tag_constants.SERVING],
@@ -186,7 +221,7 @@ class TFPNetwork(Model):
                 batch_size_ph = graph.get_tensor_by_name('batch_size:0')
                 # Get restored model output
                 restored_logits = graph.get_tensor_by_name('prediction:0')
-                label_probs = graph.get_tensor_by_name('Normal/label_probs/Reshape:0')
+                label_probs = graph.get_tensor_by_name('StudentT/label_probs/Reshape:0')
                 # Get dataset initializing operation
                 dataset_init_op = graph.get_operation_by_name('test_dataset_init')
 
@@ -235,7 +270,12 @@ class BayesianNeuralNetwork(Model):
         self.train_x = x
         self.train_y = y
         with self.model:
-            if method == 'nuts':
+            if method == 'nuts' or method == 'metropolis':
+
+                if method == 'nuts' and self.inference is None:
+                    self.inference = pm.NUTS()
+                # else:
+                #     step = pm.Metropolis()
                 self.x.set_value(x.astype(floatX))
                 self.y.set_value(y.astype(floatX))
                 for _ in range(n_models):
@@ -243,7 +283,7 @@ class BayesianNeuralNetwork(Model):
                         trace = self.trace
                     else:
                         trace = None
-                    self.trace = pm.sample(epochs, trace=trace, **sample_kwargs)
+                    self.trace = pm.sample(epochs, step=self.inference, trace=trace, **sample_kwargs)
             else:
                 mini_x = pm.Minibatch(x, batch_size=batch_size, dtype=floatX)
                 mini_y = pm.Minibatch(y, batch_size=batch_size, dtype=floatX)
@@ -286,7 +326,7 @@ class BayesianNeuralNetwork(Model):
 
     def save_model(self, filepath):
         with open(filepath, 'wb') as f:
-            pickle.dump([self.model, self.total_train_runs, self.inference, self.trace, self.x, self.y, self.train_x, self.train_y], f)
+            pickle.dump([self.model, self.total_train_runs, self.inference, self.trace, self.x, self.y, self.train_x, self.train_y], f, protocol=4)
 
     def load_model(self, filepath):
         with open(filepath, 'rb') as f:
