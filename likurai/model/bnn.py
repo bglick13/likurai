@@ -9,9 +9,9 @@ from .. import shared
 import pickle
 from .. import floatX
 import tensorflow as tf
-import tensorflow_probability as tfp
-from tensorflow_probability.python.layers.util import default_mean_field_normal_fn
-from tensorflow.python.saved_model import tag_constants
+# import tensorflow_probability as tfp
+# from tensorflow_probability.python.layers.util import default_mean_field_normal_fn
+# from tensorflow.python.saved_model import tag_constants
 from functools import partial
 import shutil
 
@@ -53,7 +53,7 @@ class TFPNetwork(Model):
                                                 name='layer_{}'.format(i))(h)
                     if dense:
                         layers.append(h)
-                        h = tf.keras.layers.Concatenate()(layers)
+                        h = tf.keras.layers.Concatenate()(layers[:])
 
                 if scale_param:
                     loc_hidden = tfp.layers.DenseFlipout(6, activation=tf.nn.relu, name='loc_hidden')(h)
@@ -80,7 +80,7 @@ class TFPNetwork(Model):
                 if scale_param:
                     labels_distribution = tfp.distributions.Normal(loc=_loc, scale=tf.add(_scale, 1.0e-6))
                 else:
-                    labels_distribution = tfp.distributions.StudentT(loc=_loc, scale=scale, df=1.0)
+                    labels_distribution = tfp.distributions.StudentT(loc=_loc, scale=scale, df=10.0)
 
                 label_probs = labels_distribution.sample(name='label_probs')
 
@@ -361,12 +361,13 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
         return x, y
 
     def prepare_test_data(self, x, groups):
-        original_indexes = np.array([i for i in range(len(x))])
+        original_indexes = np.arange(len(x))
         max_idx = len(x)
         Xs = []
         Idxs = []
         max_len = 0
         for i in np.unique(groups):
+            # Get all samples from the relevant group
             X = np.array(x[groups == i]).astype(float)
             idx = np.array(original_indexes[groups == i])
             if len(X) > max_len:
@@ -400,7 +401,6 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
         super().fit(x, y, epochs, method, batch_size, n_models, **sample_kwargs)
 
     def predict(self, x, n_samples=1, progressbar=True, point_estimate=False, **kwargs):
-        groups = kwargs.pop('groups')
         idxs = kwargs.pop('idxs')
         max_idx = kwargs.pop('max_idx')
         ppc = super().predict(x, n_samples, progressbar, point_estimate, **kwargs)
@@ -412,13 +412,3 @@ class HierarchicalBayesianNeuralNetwork(BayesianNeuralNetwork):
             for i, original_i in enumerate(idxs_of_group):
                 out[:, original_i] = ppc[:, grp, i].squeeze()
         return out
-        # # Keeps track of how many times a sample from each group has appeared
-        # grp_count = dict((g, 0) for g in np.unique(groups))
-        # # Used to index the group occurrences into a flat array to return
-        # grp_occurrences = []
-        # for g in groups:
-        #     grp_occurrences.append(grp_count[g])
-        #     grp_count[g] += 1
-        #
-        # pred = ppc[:, groups, grp_occurrences]
-        # return pred

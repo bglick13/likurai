@@ -37,7 +37,7 @@ def get_class_exemplar(draws, class_index, n_exemplars=1, best=True, labels=None
     return examples
 
 
-def get_dense_network_shapes(n_features, n_outputs, n_layers=None, hidden_size=None, layers=None):
+def get_dense_network_shapes(n_features, n_outputs, n_layers=None, hidden_size=None, layers=None, include_features=True):
     """
     Helper function to generate the input/output shapes for the layers of a densely connected network
     :param n_layers: Number of hidden layers in the network
@@ -50,15 +50,15 @@ def get_dense_network_shapes(n_features, n_outputs, n_layers=None, hidden_size=N
     if layers is not None:
         shapes = {'input': (n_features, layers[0]),
                   'hidden': [],
-                  'output': (np.sum(layers) + n_features, n_outputs)}
+                  'output': (np.sum(layers) + (n_features * int(include_features)), n_outputs)}
         for i, l in enumerate(layers[1:]):
-            shapes['hidden'].append((int(np.sum(layers[:i+1])) + n_features, l))
+            shapes['hidden'].append((int(np.sum(layers[:i+1])) + (n_features * int(include_features)), l))
     else:
         shapes = {'input': (n_features, hidden_size),
                   'hidden': [],
-                  'output': (hidden_size * (n_layers+1) + n_features, n_outputs)}
+                  'output': (hidden_size * (n_layers+1) + (n_features * int(include_features)), n_outputs)}
         for i in range(n_layers):
-            shapes['hidden'].append((hidden_size * (i + 1) + n_features, hidden_size))
+            shapes['hidden'].append((hidden_size * (i + 1) + (n_features * int(include_features)), hidden_size))
     return shapes
 
 
