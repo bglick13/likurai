@@ -3,10 +3,10 @@ This file will contain objects to create various forms of GANs
 """
 import numpy as np
 from keras.models import Model, load_model, save_model
-from keras.layers import LSTM, Input, Concatenate, Dense, TimeDistributed, RepeatVector, Embedding, Multiply
+from keras.layers import LSTM, Input, Concatenate, Dense, TimeDistributed, RepeatVector, Embedding, Multiply, Flatten, BatchNormalization
 import keras.backend as K
 from keras.losses import binary_crossentropy
-from keras.optimizers import Adam
+from keras.optimizers import Adam, RMSprop
 import os
 import tensorflow as tf
 import tensorflow_probability as tfp
@@ -237,13 +237,20 @@ class ConditionalRCGAN(GAN):
         self.learning_rate = learning_rate
         super().__init__()
 
+    # TODO: Should these really be time distributed or a) an LSTM(1) b) a single Dense layer (for Disc anyway)
+    # TODO: Is it feasible to implement a rollout for the generator here?
+
     def build_discriminator(self):
         inputs = Input(shape=(self.sequence_length, 1))
-        c = Input(shape=(self.conditional_data_size, ))
-        c_stacked = RepeatVector(self.sequence_length)(c)
-        h = Concatenate(axis=2)([inputs, c_stacked])
+        # c = Input(shape=(self.conditional_data_size, ))
+        c = Input(shape=(1, ))
+        embedding = Embedding(self.conditional_data_size, self.generator_latent_dim)(c)
+        embedding = Flatten()(embedding)
+        c_stacked = RepeatVector(self.sequence_length)(embedding)
+        h = Multiply()([inputs, c_stacked])
         for _ in range(self.n_discriminator_layers):
             h = LSTM(self.discriminator_hidden_size, return_sequences=True, activation='tanh')(h)
+            # h = BatchNormalization()(h)
         output = TimeDistributed(Dense(1, activation='sigmoid'))(h)
         model = Model(inputs=[inputs, c], outputs=output)
         print("Discriminator summary...")
@@ -252,12 +259,16 @@ class ConditionalRCGAN(GAN):
 
     def build_generator(self):
         z = Input(shape=(self.sequence_length, self.generator_latent_dim))
-        c = Input(shape=(self.conditional_data_size, ))
-        c_embed = Dense(self.generator_embed_size, activation='tanh')(c)
-        c_stacked = RepeatVector(self.sequence_length)(c_embed)
-        h = Concatenate(axis=2)([z, c_stacked])
+        # c = Input(shape=(self.conditional_data_size, ))
+        c = Input(shape=(1,))
+        embedding = Embedding(self.conditional_data_size, self.generator_latent_dim, input_length=1)(c)
+        embedding = Flatten()(embedding)
+        c_stacked = RepeatVector(self.sequence_length)(embedding)
+        h = Multiply()([z, c_stacked])
         for _ in range(self.n_generator_layers):
             h = LSTM(self.generator_hidden_size, return_sequences=True, activation='tanh')(h)
+            # h = BatchNormalization()(h)
+
         outputs = TimeDistributed(Dense(1, activation='tanh'))(h)
         model = Model(inputs=[z, c], outputs=outputs)
         print("Generator summary...")
@@ -268,20 +279,21 @@ class ConditionalRCGAN(GAN):
         self.discriminator = self.build_discriminator()
         self.generator = self.build_generator()
 
-        self.discriminator.compile(Adam(self.learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
-        self.generator.compile(Adam(self.learning_rate), loss='mean_squared_error')
+        self.discriminator.compile(RMSprop(self.learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
+        self.generator.compile(RMSprop(self.learning_rate), loss='mean_squared_error')
 
         z = Input(shape=(self.sequence_length, self.generator_latent_dim))
-        c = Input(shape=(self.conditional_data_size, ))
+        c = Input(shape=(1, ))
         generated = self.generator([z, c])
 
         self.discriminator.trainable = False
         valid = self.discriminator([generated, c])
 
         self.combined = Model([z, c], valid)
-        self.combined.compile(loss='binary_crossentropy', optimizer=Adam(self.learning_rate))
+        self.combined.compile(loss='binary_crossentropy', optimizer=RMSprop(self.learning_rate))
 
     def bootstrap_generator(self, x, y, epochs, batch_size=128):
+        # TODO: This should train the generator to predict the next token (i.e., standard RNN training)
         for epoch in range(epochs * (len(x) // batch_size)):
             idx = np.random.randint(0, len(x), batch_size)
             real_data, c = y[idx], x[idx]
