@@ -57,75 +57,72 @@ class ConditionalSeqGAN:
             self.sequence_length = sequence_length
             self.batch_size = batch_size
 
-            # sequence_input =
+            self.pred = K.placeholder(shape=(None, self.sequence_length, self.n_classes), name='pred')
+            self.rewards = K.placeholder(shape=(None, ), name='rewards')
 
-            sequence_input = Input(batch_shape=(self.sequence_length, self.n_classes))
-            conditional_input = Input((conditional_data_size,))
-            embedding = Embedding(n_classes, embedding_dim, mask_zero=True)(sequence_input)
-            conditional_embedding = Dense(embedding_dim, activation='tanh')(conditional_input)
-            h = Multiply()([embedding, conditional_embedding])
-            Model(inputs=[sequence_input, conditional_input], outputs=h).summary()
+            sequence_input = Input((sequence_length, ))
+            conditional_input = Input((1,))
+
+            # TODO: Not sure how I feel about these embedding layers, but let's try them for now
+            sequence_embedding = Embedding(self.n_classes+1, hidden_size, input_length=sequence_length, mask_zero=True)(sequence_input)
+            conditional_embedding = Embedding(self.conditional_data_size, hidden_size, input_length=1)(conditional_input)
+            h = Multiply()([sequence_embedding, conditional_embedding])
             # Stateful = True should allow MCTS style prediction (need to manually reset states each batch during train)
-            self.lstm = LSTM(hidden_size, return_sequences=False, return_state=True, stateful=True, activation='tanh')
-            self.states = self.lstm(h)
-            self.lstm_output = self.states[0]
-            self.states = self.states[1:]
+            h = LSTM(hidden_size, return_sequences=False, activation='tanh')(h)
 
             # Not time distributed since we're doing MCTS style prediction
-            logits = Dense(n_classes, activation='softmax')(self.lstm_output)
-            self.model = Model(inputs=[sequence_input, conditional_input], outputs=logits)
-            self.model.summary()
-            self.opt = Adam(learning_rate)
+            logits = Dense(n_classes, activation='softmax')(h)
+            self.pg_model = Model(inputs=[sequence_input, conditional_input], outputs=logits)
+            self.pg_opt = RMSprop(learning_rate)
+            # TODO: Create MLE loss as well. That should be much more straight forward
 
-        def sample(self, num_samples, sequence_input, conditional_data):
+            # TODO: This doesn't work because it's disconnected from the model. I don't know how to implement rollouts so it isn't though
+            # Actually, this is probably why the PyTorch implementation is so simple...since it's eager you can just calculate the loss and do a backward pass manually. No graph bullshit...
+            self.pg_loss = -K.sum(
+                K.sum(K.one_hot(K.cast(self.pred, np.int32), self.n_classes + 1) * K.log(self.pred)) * self.rewards
+            )
+            update = self.pg_opt.get_updates(params=self.pg_model.trainable_weights, loss=self.pg_loss)
+
+            self.pg_train = K.function([self.pred, self.rewards], [self.pg_loss], updates=update)
+            self.pg_model.summary()
+
+        def do_rollout(self, sequence, conditional_data):
             """
-            Generate num_samples sequences given the input data
-            :param num_samples:
+            Takes a batch-size = 1 of sequences and completes them (it) by randomly sampling from the model output.
+            In this sense, it is doing an MCTS rollout with its own policy.
+
+            # TODO: Consider using target model (i.e., slowly trailing G) for stability
+
+            :param sequence: For an empty sequence, this will be [[[0]]] (i.e., (1, 1, 1)
             :param conditional_data:
-            :return:
+            :return: completed sequence (1, sequence_length, 1)
             """
-            # inp = np.zeros((num_samples, self.sequence_length, self.n_classes))
-            output = np.tile(sequence_input, (num_samples, 1, 1))
-            for i in range(num_samples):
-                for j in range(self.sequence_length):
-                    if output[i, j].sum() > 0:
-                        continue
-                    out = self.model.predict_on_batch([output[i], conditional_data.reshape((1, -1))])
-                    # self.lstm.reset_states(states=self.states)
-                    choice = np.random.choice(range(self.n_classes), size=1, p=out[j])
-                    output[i, j, choice] = 1
-                self.model.reset_states()
-            return output
+            if len(sequence.shape) == 2:
+                sequence = np.array([sequence])
 
-        def pg_loss(self, sample, reward):
-            """
-            :param sample:
-            :param target:
-            :param reward:
-            :return:
-            """
+            while sequence.shape[1] < self.sequence_length:
+                logits = self.pg_model.predict([sequence, conditional_data])
+                chosen_action = tf.multinomial(logits, 1)
+                sequence = np.append(sequence, chosen_action, axis=1)
+            return sequence
 
-            """
-            self.g_loss = -tf.reduce_sum(
-            tf.reduce_sum(
-                tf.one_hot(tf.to_int32(tf.reshape(self.x, [-1])), self.num_emb, 1.0, 0.0) * tf.log(
-                    tf.clip_by_value(tf.reshape(self.g_predictions, [-1, self.num_emb]), 1e-20, 1.0)
-                ), 1) * tf.reshape(self.rewards, [-1])
-        )
-            """
-            loss = -K.sum(K.log(sample) * reward)
-
-            return loss
-
-        def train_pg(self, s, rewards):
-
-            loss = self.pg_loss(s, rewards)  # Target should just remove the start letter/sequence
-            updates = self.opt.get_updates(self.model.trainable_weights, [], loss)
-            self.train_fn = K.function(inputs=[s, rewards],
-                                       outputs=[],
-                                       updates=updates)
-            self.train_fn([s, rewards])
-            return loss
+        # def sample(self, num_samples, sequence_input, conditional_data):
+        #     """
+        #     Generate num_samples sequences given the input data
+        #     :param num_samples:
+        #     :param conditional_data:
+        #     :return:
+        #     """
+        #     # inp = np.zeros((num_samples, self.sequence_length, self.n_classes))
+        #     output = np.tile(sequence_input, (num_samples, 1, 1))
+        #     for i in range(num_samples):
+        #         for j in range(self.sequence_length):
+        #             if output[i, j].sum() > 0:
+        #                 continue
+        #             out = self.pg_model.predict_on_batch([output[i], conditional_data.reshape((1, -1))])
+        #             choice = np.random.choice(range(self.n_classes), size=1, p=out[j])
+        #             output[i, j, choice] = 1
+        #     return output
 
     class Discriminator:
 
@@ -138,18 +135,18 @@ class ConditionalSeqGAN:
             self.learning_rate = learning_rate
             self.sequence_length = sequence_length
 
-            sequence_input = Input(batch_shape=(self.sequence_length, self.n_classes))
-            conditional_input = Input((self.conditional_data_size,))
+            sequence_input = Input((self.sequence_length, 1))
+            conditional_input = Input((1,))
 
-            # Embed both inputs to the same space
-            embedding = Embedding(self.n_classes, self.embedding_dim)(sequence_input)
-            conditional_embedding = Dense(self.embedding_dim, activation='tanh')(conditional_input)
-            h = Multiply()([embedding, conditional_embedding])
-            Model(inputs=[sequence_input, conditional_input], outputs=h).summary()
+            # TODO: Not sure how I feel about these embedding layers, but let's try them for now
+            sequence_embedding = Embedding(self.n_classes + 1, hidden_size, input_length=1, mask_zero=True)(sequence_input)
+            conditional_embedding = Embedding(self.conditional_data_size, hidden_size, input_length=1)(conditional_input)
+            h = Multiply()([sequence_embedding, conditional_embedding])
+            # Stateful = True should allow MCTS style prediction (need to manually reset states each batch during train)
+            h = LSTM(hidden_size, return_sequences=False, activation='tanh')(h)
 
-            # LSTM layer - statefulness isn't necessary as w're predicting for each timestep in a sequence
-            h = LSTM(self.hidden_size, return_sequences=True, activation='tanh')(h)
-            logits = TimeDistributed(Dense(1, activation='sigmoid'))(h)
+            # Not time distributed since we're doing MCTS style prediction
+            logits = Dense(1, activation='sigmoid')(h)
             self.model = Model(inputs=[sequence_input, conditional_input], outputs=logits)
             self.model.compile(Adam(self.learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
             self.model.summary()
@@ -195,25 +192,31 @@ class ConditionalSeqGAN:
         # 3) Adversarial training
         valid = np.ones((batch_size, self.sequence_length, 1))
         fake = np.zeros((batch_size, self.sequence_length, 1))
-        start_sequence = np.zeros((18, self.n_classes))
+        start_sequence = np.zeros((1, 18))
 
         for epoch in range(epochs):
+            # Sample a batch of data
             idxs = np.random.randint(0, len(conditional_data), batch_size)
-            generated_samples = []
             # Train generator
             g_loss = 0
             for idx in idxs:
-                s = self.generator.sample(batch_size, start_sequence, conditional_data[idx])
-                rewards = np.array([self.discriminator.predict(s[i], conditional_data[idx]) for i in range(batch_size)]).squeeze()
-                g_loss += self.generator.train_pg(s, rewards)
-                generated_samples.append(s)
+                rollouts = []
+                rewards = []
+                generated_sequence = self.generator.do_rollout(start_sequence, conditional_data[idx])[0]  # (sequence_length, 1)
+                for timestep in range(1, self.sequence_length):
+                    rollout = self.generator.do_rollout(generated_sequence[:timestep], conditional_data[idx])[0]
+                    reward = self.discriminator.predict(rollout, conditional_data[idx])
+                    rollouts.append(rollout)
+                    rewards.append(reward)
+                pg_loss = self.generator.pg_train(generated_sequence, np.array(rewards))
+                print("PG loss: {}".format(pg_loss))
 
-            g_loss /= batch_size
+            generated_samples = [self.generator.do_rollout(start_sequence, conditional_data[idx])[0] for idx in idxs]
+            real_samples = sequence_data[idxs]
+            conditional_samples = conditional_data[idxs]
+            d_loss_real = self.discriminator.train_on_batch(generated_samples, conditional_samples, fake)
+            d_loss_fake = self.discriminator.train_on_batch(real_samples, conditional_samples, valid)
 
-            sequence_batch = sequence_data[idxs]
-            conditional_batch = conditional_data[idxs]
-            d_loss_real = self.discriminator.train_on_batch(sequence_batch, conditional_batch, valid)
-            d_loss_fake = self.discriminator.train_on_batch(np.array(generated_samples), conditional_data, fake)
             d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
             print("%d [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100 * d_loss[1], g_loss))
 
