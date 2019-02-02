@@ -2,10 +2,10 @@ import theano
 floatX = theano.config.floatX
 shared = theano.shared
 from .layer import BayesianDense, HierarchicalBayesianDense, BayesianConv2D, Likelihood
-from .model import BayesianNeuralNetwork, HierarchicalBayesianNeuralNetwork, TFPNetwork, ConditionalSeqGAN
+from .model import BayesianNeuralNetwork, HierarchicalBayesianNeuralNetwork, TFPNetwork
 from .model import Generator, Discriminator
 from .util import get_dense_network_shapes, flat_to_hierarchical
 
 __all__ = ['BayesianDense', 'HierarchicalBayesianDense', 'BayesianConv2D', 'BayesianNeuralNetwork', 'floatX', 'shared',
            'get_dense_network_shapes', 'Likelihood', 'flat_to_hierarchical', 'HierarchicalBayesianNeuralNetwork',
-           'TFPNetwork', 'ConditionalSeqGAN', 'Generator', 'Discriminator']
+           'TFPNetwork', 'Generator', 'Discriminator']
