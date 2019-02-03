@@ -18,7 +18,7 @@ import os
 
 class Discriminator(nn.Module):
     def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, n_hidden=1,
-               dropout=0.2):
+               dropout=0.2, conditional=False):
         super(Discriminator , self).__init__()
         self.n_classes = n_classes
         self.conditional_data_sie = conditional_data_size
@@ -27,22 +27,24 @@ class Discriminator(nn.Module):
         self.sequence_length = sequence_length
         self.n_hidden = n_hidden
         self.dropout = dropout
+        self.conditional = conditional
 
         self.sequence_embedding = nn.Embedding(self.n_classes, self.embedding_dim)
-        self.conditional_embeddding = nn.Embedding(self.conditional_data_sie, self.embedding_dim)
+        if self.conditional:
+            self.conditional_embeddding = nn.Embedding(self.conditional_data_sie, self.embedding_dim)
         self.gru = nn.GRU(self.embedding_dim, self.hidden_size, num_layers=self.n_hidden, bidirectional=True, dropout=self.dropout)
         self.hidden = nn.Linear(self.hidden_size*2*self.n_hidden, self.hidden_size)
         self.dropout_hidden_to_out = nn.Dropout(p=self.dropout)
         self.out = nn.Linear(self.hidden_size, 1)
 
-    def forward(self, sequence_input, conditional_input, hidden):
-        conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
-
-        # sequence_input = sequence_input.permute(1, 0, 2)
+    def forward(self, sequence_input, hidden, conditional_input=None):
+        if self.conditional:
+            conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
 
         sequence_emb = self.sequence_embedding(sequence_input)
-        conditional_emb = self.conditional_embeddding(conditional_input)
-        emb = torch.mul(sequence_emb, conditional_emb)
+        if self.conditional:
+            conditional_emb = self.conditional_embeddding(conditional_input)
+            emb = torch.mul(sequence_emb, conditional_emb)
         # emb = emb.view(1, -1, self.embedding_dim)
         emb = emb.permute(1, 0, 2)
         _, hidden = self.gru(emb, hidden)
@@ -58,9 +60,12 @@ class Discriminator(nn.Module):
         h = autograd.Variable(torch.zeros(self.n_hidden*2, batch_size, self.hidden_size))
         return h.cuda()
 
-    def predict_on_batch(self, sequence_input, conditional_input, batch_size=1):
+    def predict_on_batch(self, sequence_input, conditional_input=None, batch_size=1):
         h = self.init_hidden(batch_size)
-        out = self.forward(sequence_input, conditional_input, h)
+        if self.conditional:
+            out = self.forward(sequence_input, h, conditional_input)
+        else:
+            out = self.forward(sequence_input, h)
         return out.view(-1)
 
     def loss(self, pred, true):
@@ -69,16 +74,18 @@ class Discriminator(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length):
+    def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, conditional=False):
         super(Generator, self).__init__()
         self.n_classes = n_classes
         self.conditional_data_size = conditional_data_size
         self.embedding_dim = embedding_dim
         self.hidden_size = hidden_size
         self.sequence_length = sequence_length
+        self.conditional = conditional
 
         self.sequence_embedding = nn.Embedding(self.n_classes+1, self.embedding_dim)
-        self.conditional_embeddding = nn.Embedding(self.conditional_data_size, self.embedding_dim)
+        if self.conditional:
+            self.conditional_embeddding = nn.Embedding(self.conditional_data_size, self.embedding_dim)
         self.gru = nn.GRU(self.embedding_dim, self.hidden_size)
         self.out = nn.Linear(self.hidden_size, self.n_classes)
 
@@ -86,13 +93,13 @@ class Generator(nn.Module):
         h = autograd.Variable(torch.zeros(1, batch_size, self.hidden_size))
         return h.cuda()
 
-    def forward(self, sequence_input, conditional_input, hidden):
+    def forward(self, sequence_input, hidden, conditional_input=None):
         # input shape = (batch_size, 1)
-        # assert sequence_input.size()[1] == 1, "Input shape should be (batch_size, 1)"
         sequence_emb = self.sequence_embedding(sequence_input)
-        conditional_emb = self.conditional_embeddding(conditional_input)
 
-        emb = torch.mul(sequence_emb, conditional_emb)
+        if self.conditional:
+            conditional_emb = self.conditional_embeddding(conditional_input)
+            emb = torch.mul(sequence_emb, conditional_emb)
         # emb = emb.view(1, -1, self.embedding_dim)
         emb = emb.permute(1, 0, 2)
         out, hidden = self.gru(emb, hidden)  # input (seq_len, batch_size, n_features) --> (seq_len, batch_size, hidden)
@@ -102,31 +109,40 @@ class Generator(nn.Module):
         out = F.log_softmax(out, dim=1)
         return out, hidden
 
-    def train_mle(self, sequence_input, conditional_input, targets):
+    def train_mle(self, sequence_input, targets, conditional_input=None):
         loss_fn = nn.NLLLoss()
         batch_size, seq_len = sequence_input.size()
 
-        conditional_input = conditional_input.unsqueeze(1)
+        if self.conditional:
+            conditional_input = conditional_input.unsqueeze(1)
 
         h = self.init_hidden(batch_size)
         loss = 0
         for i in range(self.sequence_length):
-            out, h = self.forward(sequence_input[:, i].unsqueeze(1), conditional_input, h)
+            if self.conditional:
+                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h, conditional_input)
+            else:
+                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h)
             loss += loss_fn(out, targets[:, i])
         return loss
 
-    def sample(self, conditional_input, batch_size, n_samples=1):
+    def sample(self, batch_size, conditional_input=None, n_samples=1):
         """
         Creates n_samples full sequences from scratch - basically the predict function
         :param conditional_input: (batch_size, conditional_data_size)
         :return: (batch_size, 18, 1)
         """
         samples = torch.zeros(batch_size, self.sequence_length).type(torch.LongTensor).cuda()
-        conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
+        if self.conditional:
+            conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
         h = self.init_hidden(batch_size)
         sequence_input = autograd.Variable(torch.Tensor([0]*batch_size)).type(torch.LongTensor).cuda().unsqueeze(1)
         for i in range(self.sequence_length):
-            out, h = self.forward(sequence_input, conditional_input, h)
+            if self.conditional:
+                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h, conditional_input)
+            else:
+                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h)
+
             # Add one to account for special start token
             out = torch.multinomial(torch.exp(out), 1) + 1
             samples[:, i] = out.view(-1).data
@@ -134,7 +150,7 @@ class Generator(nn.Module):
 
         return samples
 
-    def do_rollout(self, sequence_input, conditional_input, from_scratch):
+    def do_rollout(self, sequence_input, conditional_input=None, from_scratch=True):
         # Make sure the inputs are PyTorch Tensors
         if isinstance(sequence_input, (list, np.ndarray)):
             rollout = torch.LongTensor(sequence_input)
@@ -144,7 +160,8 @@ class Generator(nn.Module):
             rollout = sequence_input
 
         h = self.init_hidden(1)
-        conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(0)
+        if self.conditional:
+            conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(0)
         sequence_input = sequence_input.unsqueeze(0)
         # rollout = torch.cat((rollout, torch.zeros(1, self.max_seq_len - len(sequence_input))))
 
@@ -156,10 +173,11 @@ class Generator(nn.Module):
 
         i = 0
         while rollout.size()[0] < n_samples:  # Adding 1 for the start token
-            try:
-                out, h = self.forward(sequence_input, conditional_input, h)
-            except:
-                pass
+            if self.conditional:
+                out, h = self.forward(sequence_input, h, conditional_input)
+            else:
+                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h)
+
             if from_scratch:
                 logits[i, :] = out.view(-1)
                 i += 1
