@@ -45,6 +45,8 @@ class Discriminator(nn.Module):
         if self.conditional:
             conditional_emb = self.conditional_embeddding(conditional_input)
             emb = torch.mul(sequence_emb, conditional_emb)
+        else:
+            emb = sequence_emb
         # emb = emb.view(1, -1, self.embedding_dim)
         emb = emb.permute(1, 0, 2)
         _, hidden = self.gru(emb, hidden)
@@ -74,7 +76,8 @@ class Discriminator(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, conditional=False):
+    def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, conditional=False,
+                 start_character=3):
         super(Generator, self).__init__()
         self.n_classes = n_classes
         self.conditional_data_size = conditional_data_size
@@ -82,8 +85,9 @@ class Generator(nn.Module):
         self.hidden_size = hidden_size
         self.sequence_length = sequence_length
         self.conditional = conditional
+        self.start_character = start_character
 
-        self.sequence_embedding = nn.Embedding(self.n_classes+1, self.embedding_dim)
+        self.sequence_embedding = nn.Embedding(self.n_classes, self.embedding_dim)
         if self.conditional:
             self.conditional_embeddding = nn.Embedding(self.conditional_data_size, self.embedding_dim)
         self.gru = nn.GRU(self.embedding_dim, self.hidden_size)
@@ -100,6 +104,8 @@ class Generator(nn.Module):
         if self.conditional:
             conditional_emb = self.conditional_embeddding(conditional_input)
             emb = torch.mul(sequence_emb, conditional_emb)
+        else:
+            emb = sequence_emb
         # emb = emb.view(1, -1, self.embedding_dim)
         emb = emb.permute(1, 0, 2)
         out, hidden = self.gru(emb, hidden)  # input (seq_len, batch_size, n_features) --> (seq_len, batch_size, hidden)
@@ -136,15 +142,15 @@ class Generator(nn.Module):
         if self.conditional:
             conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
         h = self.init_hidden(batch_size)
-        sequence_input = autograd.Variable(torch.Tensor([0]*batch_size)).type(torch.LongTensor).cuda().unsqueeze(1)
+        sequence_input = autograd.Variable(torch.Tensor([self.start_character]*batch_size)).type(torch.LongTensor).cuda().unsqueeze(1)
         for i in range(self.sequence_length):
             if self.conditional:
-                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h, conditional_input)
+                out, h = self.forward(sequence_input, h, conditional_input)
             else:
-                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h)
+                out, h = self.forward(sequence_input, h)
 
             # Add one to account for special start token
-            out = torch.multinomial(torch.exp(out), 1) + 1
+            out = torch.multinomial(torch.exp(out), 1)
             samples[:, i] = out.view(-1).data
             sequence_input = out.view(-1).unsqueeze(1)
 
@@ -176,14 +182,14 @@ class Generator(nn.Module):
             if self.conditional:
                 out, h = self.forward(sequence_input, h, conditional_input)
             else:
-                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h)
+                out, h = self.forward(sequence_input, h)
 
             if from_scratch:
                 logits[i, :] = out.view(-1)
                 i += 1
 
             # Add 1 to account for special start token
-            out = torch.multinomial(torch.exp(out), 1) + 1
+            out = torch.multinomial(torch.exp(out), 1)
             rollout = torch.cat((rollout, out.view(-1)))
             sequence_input = out.view(-1).unsqueeze(0)
 
