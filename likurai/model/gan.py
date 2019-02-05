@@ -63,7 +63,14 @@ class Discriminator(nn.Module):
         return h.cuda()
 
     def predict_on_batch(self, sequence_input, conditional_input=None, batch_size=1):
-        h = self.init_hidden(batch_size)
+        """
+
+        :param sequence_input: autograd.Variable
+        :param conditional_input:
+        :param batch_size:
+        :return:
+        """
+        h = self.init_hidden(sequence_input.size()[0])
         if self.conditional:
             out = self.forward(sequence_input, h, conditional_input)
         else:
@@ -139,6 +146,7 @@ class Generator(nn.Module):
         :return: (batch_size, 18, 1)
         """
         samples = torch.zeros(batch_size, self.sequence_length).type(torch.LongTensor).cuda()
+        logits = torch.zeros(n_samples, self.n_classes)
         if self.conditional:
             conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
         h = self.init_hidden(batch_size)
@@ -149,18 +157,18 @@ class Generator(nn.Module):
             else:
                 out, h = self.forward(sequence_input, h)
 
-            # Add one to account for special start token
+            logits[i, :] = out.view(-1)
             out = torch.multinomial(torch.exp(out), 1)
             samples[:, i] = out.view(-1).data
             sequence_input = out.view(-1).unsqueeze(1)
 
-        return samples
+        return samples, logits
 
-    def do_rollout(self, sequence_input, conditional_input=None, from_scratch=True):
+    def do_rollout(self, sequence_input, conditional_input=None):
         # Make sure the inputs are PyTorch Tensors
+        # TODO: Let's just make this its own helper function to clean everything up
         if isinstance(sequence_input, (list, np.ndarray)):
-            rollout = torch.LongTensor(sequence_input)
-            rollout = rollout.cuda()
+            rollout = torch.LongTensor(sequence_input).cuda()
             sequence_input = torch.LongTensor(sequence_input).cuda()
         else:
             rollout = sequence_input
@@ -169,32 +177,17 @@ class Generator(nn.Module):
         if self.conditional:
             conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(0)
         sequence_input = sequence_input.unsqueeze(0)
-        # rollout = torch.cat((rollout, torch.zeros(1, self.max_seq_len - len(sequence_input))))
 
-        if from_scratch:
-            n_samples = self.sequence_length + 1
-            logits = torch.zeros(n_samples, self.n_classes)
-        else:
-            n_samples = self.sequence_length
-
-        i = 0
-        while rollout.size()[0] < n_samples:  # Adding 1 for the start token
+        while rollout.size()[0] < self.sequence_length:
             if self.conditional:
                 out, h = self.forward(sequence_input, h, conditional_input)
             else:
                 out, h = self.forward(sequence_input, h)
 
-            if from_scratch:
-                logits[i, :] = out.view(-1)
-                i += 1
-
-            # Add 1 to account for special start token
             out = torch.multinomial(torch.exp(out), 1)
             rollout = torch.cat((rollout, out.view(-1)))
             sequence_input = out.view(-1).unsqueeze(0)
 
-        if from_scratch:
-            return rollout[1:].unsqueeze(0), logits[:-1].unsqueeze(0)
         return rollout.unsqueeze(0)
 
     def pg_loss(self, pred, rewards):
