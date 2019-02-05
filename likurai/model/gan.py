@@ -39,7 +39,8 @@ class Discriminator(nn.Module):
 
     def forward(self, sequence_input, hidden, conditional_input=None):
         if self.conditional:
-            conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
+            if isinstance(conditional_input, (list, np.ndarray)):
+                conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
 
         sequence_emb = self.sequence_embedding(sequence_input)
         if self.conditional:
@@ -146,9 +147,10 @@ class Generator(nn.Module):
         :return: (batch_size, 18, 1)
         """
         samples = torch.zeros(batch_size, self.sequence_length).type(torch.LongTensor).cuda()
-        logits = torch.zeros(n_samples, self.n_classes)
+        logits = torch.zeros(batch_size, self.sequence_length, self.n_classes)
         if self.conditional:
-            conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
+            if isinstance(conditional_input, (list, np.ndarray)):
+                conditional_input = torch.LongTensor(conditional_input).cuda().unsqueeze(1)
         h = self.init_hidden(batch_size)
         sequence_input = autograd.Variable(torch.Tensor([self.start_character]*batch_size)).type(torch.LongTensor).cuda().unsqueeze(1)
         for i in range(self.sequence_length):
@@ -157,7 +159,7 @@ class Generator(nn.Module):
             else:
                 out, h = self.forward(sequence_input, h)
 
-            logits[i, :] = out.view(-1)
+            logits[:, i] = out
             out = torch.multinomial(torch.exp(out), 1)
             samples[:, i] = out.view(-1).data
             sequence_input = out.view(-1).unsqueeze(1)
