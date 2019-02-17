@@ -11,7 +11,7 @@ import numpy as np
 
 class Discriminator(nn.Module):
     def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, n_hidden=1,
-               dropout=0.2, conditional=False, conditional_type='categorical'):
+               dropout=0.2, conditional=False, conditional_type='categorical', layer_type='cnn', **kwargs):
         super(Discriminator, self).__init__()
         self.n_classes = n_classes
         self.conditional_data_size = conditional_data_size
@@ -22,6 +22,8 @@ class Discriminator(nn.Module):
         self.dropout = dropout
         self.conditional = conditional
         self.conditional_type = conditional_type
+        self.layer_type = layer_type
+        self.hidden_layers = []
 
         self.sequence_embedding = nn.Embedding(self.n_classes, self.embedding_dim)
         if self.conditional:
@@ -29,15 +31,23 @@ class Discriminator(nn.Module):
                 self.conditional_embeddding = nn.Embedding(self.conditional_data_size, self.embedding_dim)
             elif self.conditional_type == 'continuous':
                 self.conditional_embeddding = nn.Linear(self.conditional_data_size, self.embedding_dim)
-        self.gru = nn.GRU(self.embedding_dim, self.hidden_size, num_layers=self.n_hidden, bidirectional=True, dropout=self.dropout)
-        self.hidden = nn.Linear(self.hidden_size*2*self.n_hidden, self.hidden_size)
+
+        if self.layer_type == 'gru':
+            gru = nn.GRU(self.embedding_dim, self.hidden_size, num_layers=self.n_hidden, bidirectional=True,
+                         dropout=self.dropout, batch_first=True)
+            self.hidden_layers = gru
+            self.hidden = nn.Linear(self.hidden_size * 2 * self.n_hidden, self.hidden_size)
+            self.out = nn.Linear(self.hidden_size, 1)
+
+        elif self.layer_type == 'cnn':
+            self.hidden_layers = nn.ModuleList([nn.Conv1d(self.embedding_dim, kwargs['NUM_FILTERS'], ws) for ws in kwargs['WINDOW_SIZES']])
+            self.out = nn.Linear(kwargs['NUM_FILTERS'] * len(kwargs['WINDOW_SIZES']), 1)
         self.dropout_hidden_to_out = nn.Dropout(p=self.dropout)
-        self.out = nn.Linear(self.hidden_size, 1)
 
     def forward(self, sequence_input, hidden, conditional_input=None):
         if self.conditional:
             if isinstance(conditional_input, (list, np.ndarray)):
-                conditional_input = torch.Tensor(conditional_input).cuda()  #.unsqueeze(1)
+                conditional_input = torch.LongTensor(conditional_input).cuda()  #.unsqueeze(1)
 
         sequence_emb = self.sequence_embedding(sequence_input)
         if self.conditional:
@@ -48,10 +58,21 @@ class Discriminator(nn.Module):
         else:
             emb = sequence_emb
 
-        emb = emb.permute(1, 0, 2)
-        _, hidden = self.gru(emb, hidden)
-        out = self.hidden(hidden.view(-1, self.n_hidden*2*self.hidden_size))
-        out = torch.tanh(out)
+        if self.layer_type == 'gru':
+            _, hidden = self.hidden_layers(emb, hidden)
+            out = self.hidden(hidden.view(-1, self.n_hidden * 2 * self.hidden_size))
+            out = torch.tanh(out)
+
+        elif self.layer_type == 'cnn':
+            out = emb.permute(0, 2, 1)
+            outs = []
+            for conv in self.hidden_layers:
+                _out = conv(out).permute(0, 2, 1).max(1)[0]
+                _out = torch.tanh(_out)
+                outs.append(_out)
+            out = torch.cat(outs, 1)
+            # out = self.hidden(out)
+
         out = self.dropout_hidden_to_out(out)
         out = self.out(out)
         out = torch.sigmoid(out)
@@ -74,16 +95,17 @@ class Discriminator(nn.Module):
             out = self.forward(sequence_input, h, conditional_input)
         else:
             out = self.forward(sequence_input, h)
-        return out.view(-1)
+        return out
 
     def loss(self, pred, true):
         loss_fn = nn.BCELoss()
-        return loss_fn(pred, true)
+        accuracy = (torch.round(pred) == true).float().sum() / pred.size()[0]
+        return loss_fn(pred, true), accuracy
 
 
 class Generator(nn.Module):
     def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, conditional=False,
-                 start_character=3, conditional_type='categorical'):
+                 start_character=3, conditional_type='categorical', dropout=0.0):
         super(Generator, self).__init__()
         self.n_classes = n_classes
         self.conditional_data_size = conditional_data_size
@@ -93,6 +115,7 @@ class Generator(nn.Module):
         self.conditional = conditional
         self.start_character = start_character
         self.conditional_type = conditional_type
+        self.dropout = dropout
 
         self.sequence_embedding = nn.Embedding(self.n_classes, self.embedding_dim)
         if self.conditional:
@@ -100,7 +123,8 @@ class Generator(nn.Module):
                 self.conditional_embeddding = nn.Embedding(self.conditional_data_size, self.embedding_dim)
             elif self.conditional_type == 'continuous':
                 self.conditional_embeddding = nn.Linear(self.conditional_data_size, self.embedding_dim)
-        self.gru = nn.GRU(self.embedding_dim, self.hidden_size)
+        self.gru = nn.GRU(self.embedding_dim, self.hidden_size, batch_first=True)
+        self.dropout_hidden_to_out = nn.Dropout(p=self.dropout)
         self.out = nn.Linear(self.hidden_size, self.n_classes)
 
     def init_hidden(self, batch_size=1):
@@ -118,10 +142,13 @@ class Generator(nn.Module):
         else:
             emb = sequence_emb
 
-        emb = emb.permute(1, 0, 2)
+        # emb = emb.permute(1, 0, 2)
         out, hidden = self.gru(emb, hidden)  # input (seq_len, batch_size, n_features) --> (seq_len, batch_size, hidden)
-
-        out = out.view(-1, self.hidden_size)
+        out = self.dropout_hidden_to_out(out)
+        try:
+            out = out.view(-1, self.hidden_size)
+        except:
+            pass
         out = self.out(out)
         out = F.log_softmax(out, dim=1)
         return out, hidden
@@ -130,9 +157,9 @@ class Generator(nn.Module):
         loss_fn = nn.NLLLoss()
         batch_size, seq_len = sequence_input.size()
 
-        if self.conditional:
-            if self.conditional_type == 'categorical':
-                conditional_input = conditional_input.unsqueeze(1)
+        # if self.conditional:
+        #     if self.conditional_type == 'categorical':
+        #         conditional_input = conditional_input.unsqueeze(1)
 
         h = self.init_hidden(batch_size)
         loss = 0
@@ -154,7 +181,7 @@ class Generator(nn.Module):
         logits = torch.zeros(batch_size, self.sequence_length, self.n_classes)
         if self.conditional:
             if isinstance(conditional_input, (list, np.ndarray)):
-                conditional_input = torch.Tensor(conditional_input).cuda()  #.unsqueeze(1)
+                conditional_input = torch.LongTensor(conditional_input).cuda()  #.unsqueeze(1)
         h = self.init_hidden(batch_size)
         sequence_input = autograd.Variable(torch.Tensor([self.start_character]*batch_size)).type(torch.LongTensor).cuda().unsqueeze(1)
         for i in range(self.sequence_length):
@@ -181,7 +208,7 @@ class Generator(nn.Module):
 
         h = self.init_hidden(1)
         if self.conditional:
-            conditional_input = torch.Tensor(conditional_input).cuda()  #.unsqueeze(0)
+            conditional_input = torch.LongTensor(conditional_input).cuda()  #.unsqueeze(0)
         sequence_input = sequence_input.unsqueeze(0)
 
         while rollout.size()[0] < self.sequence_length:
