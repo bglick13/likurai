@@ -132,6 +132,13 @@ class Generator(nn.Module):
         return h.cuda()
 
     def forward(self, sequence_input, hidden, conditional_input=None):
+        """
+
+        :param sequence_input: the current token (batch_size, 1)
+        :param hidden: The hidden state (num_layers * num_directions, batch, hidden_size)
+        :param conditional_input: the conditional input (batch_size, 1)
+        :return:
+        """
         sequence_emb = self.sequence_embedding(sequence_input)
 
         if self.conditional:
@@ -142,13 +149,10 @@ class Generator(nn.Module):
         else:
             emb = sequence_emb
 
-        # emb = emb.permute(1, 0, 2)
         out, hidden = self.gru(emb, hidden)  # input (seq_len, batch_size, n_features) --> (seq_len, batch_size, hidden)
         out = self.dropout_hidden_to_out(out)
-        try:
-            out = out.view(-1, self.hidden_size)
-        except:
-            pass
+        out = out.view(-1, self.hidden_size)
+
         out = self.out(out)
         out = F.log_softmax(out, dim=1)
         return out, hidden
@@ -174,6 +178,7 @@ class Generator(nn.Module):
     def sample(self, batch_size, conditional_input=None):
         """
         Creates n_samples full sequences from scratch - basically the predict function
+        Critically, this calculates/processes one sequence at a time and maintains hidden states through each call to forward
         :param conditional_input: (batch_size, conditional_data_size)
         :return: (batch_size, 18, 1)
         """
@@ -201,27 +206,35 @@ class Generator(nn.Module):
         # Make sure the inputs are PyTorch Tensors
         # TODO: Let's just make this its own helper function to clean everything up
         if isinstance(sequence_input, (list, np.ndarray)):
-            rollout = torch.Tensor(sequence_input).cuda()
+            # rollout = torch.Tensor(sequence_input).cuda()
             sequence_input = torch.Tensor(sequence_input).cuda()
         else:
-            rollout = sequence_input
+            pass
+            # rollout = sequence_input
 
         h = self.init_hidden(1)
         if self.conditional:
             conditional_input = torch.LongTensor(conditional_input).cuda()  #.unsqueeze(0)
         sequence_input = sequence_input.unsqueeze(0)
 
-        while rollout.size()[0] < self.sequence_length:
+        # TODO: This is wrong because it fucks up handling the hidden state
+        starting_length = sequence_input.size()[1]
+        rollout = torch.cat((torch.ones(1, 1).type(torch.LongTensor).cuda() * self.start_character,
+                             sequence_input,
+                             torch.zeros(1, self.sequence_length-starting_length).type(torch.LongTensor).cuda()), 1)
+        for i in range(self.sequence_length):
             if self.conditional:
-                out, h = self.forward(sequence_input, h, conditional_input)
+                out, h = self.forward(rollout[0, i], h, conditional_input)
             else:
-                out, h = self.forward(sequence_input, h)
+                out, h = self.forward(rollout[0, i], h)
 
             out = torch.multinomial(torch.exp(out), 1)
-            rollout = torch.cat((rollout, out.view(-1)))
-            sequence_input = out.view(-1).unsqueeze(0)
+            # rollout = torch.cat((rollout, out.view(-1)))
 
-        return rollout.unsqueeze(0)
+            if i >= starting_length:
+                rollout[0, i+1] = out.view(-1)
+
+        return rollout[0, 1:]#.unsqueeze(0)
 
     def pg_loss(self, pred, rewards):
         # TODO: I'm not convinced this is right but I want to get everything working first
