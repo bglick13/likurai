@@ -3,11 +3,15 @@ This file will contain objects to create various forms of GANs
 """
 import torch
 import torch.autograd as autograd
+from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
 
 import numpy as np
-
+import pandas as pd
+from sklearn.metrics import r2_score, explained_variance_score
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 class Discriminator(nn.Module):
     def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, n_hidden=1,
@@ -86,7 +90,7 @@ class Discriminator(nn.Module):
         """
 
         :param sequence_input: autograd.Variable
-        :param conditional_input:
+        :param conditional_input: (batch_size, conditional_data_size)
         :param batch_size:
         :return:
         """
@@ -161,17 +165,10 @@ class Generator(nn.Module):
         loss_fn = nn.NLLLoss()
         batch_size, seq_len = sequence_input.size()
 
-        # if self.conditional:
-        #     if self.conditional_type == 'categorical':
-        #         conditional_input = conditional_input.unsqueeze(1)
-
         h = self.init_hidden(batch_size)
         loss = 0
         for i in range(self.sequence_length):
-            if self.conditional:
-                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h, conditional_input)
-            else:
-                out, h = self.forward(sequence_input[:, i].unsqueeze(1), h)
+            out, h = self.forward(sequence_input[:, i].unsqueeze(1), h, conditional_input)
             loss += loss_fn(out, targets[:, i])
         return loss
 
@@ -204,23 +201,17 @@ class Generator(nn.Module):
 
     def do_rollout(self, sequence_input, conditional_input=None):
         # Make sure the inputs are PyTorch Tensors
-        # TODO: Let's just make this its own helper function to clean everything up
         if isinstance(sequence_input, (list, np.ndarray)):
-            # rollout = torch.Tensor(sequence_input).cuda()
             sequence_input = torch.Tensor(sequence_input).cuda()
-        else:
-            pass
-            # rollout = sequence_input
 
         h = self.init_hidden(1)
         if self.conditional:
-            conditional_input = torch.LongTensor(conditional_input).cuda()  #.unsqueeze(0)
+            conditional_input = torch.LongTensor(conditional_input).cuda()
         sequence_input = sequence_input.unsqueeze(0)
 
-        # TODO: This is wrong because it fucks up handling the hidden state
         starting_length = sequence_input.size()[1]
         rollout = torch.cat((torch.ones(1, 1).type(torch.LongTensor).cuda() * self.start_character,
-                             sequence_input,
+                             sequence_input.type(torch.LongTensor).cuda(),
                              torch.zeros(1, self.sequence_length-starting_length).type(torch.LongTensor).cuda()), 1)
         for i in range(self.sequence_length):
             if self.conditional:
@@ -229,15 +220,192 @@ class Generator(nn.Module):
                 out, h = self.forward(rollout[0, i], h)
 
             out = torch.multinomial(torch.exp(out), 1)
-            # rollout = torch.cat((rollout, out.view(-1)))
 
             if i >= starting_length:
                 rollout[0, i+1] = out.view(-1)
 
-        return rollout[0, 1:]#.unsqueeze(0)
+        return rollout[0, 1:]
 
     def pg_loss(self, pred, rewards):
-        # TODO: I'm not convinced this is right but I want to get everything working first
         return torch.sum(torch.mul(pred, rewards).mul(-1)) / pred.size()[0]
 
 
+class SeqGAN:
+    def __init__(self, generator, discriminator, g_opt, d_opt, model_name='model'):
+        self.generator = generator
+        self.discriminator = discriminator
+        self.g_opt = g_opt
+        self.d_opt = d_opt
+        self.model_name = model_name
+
+        self.start_character = generator.start_character
+        self.sequence_length = generator.sequence_length
+        self.n_classes = generator.n_classes
+
+    def create_supervised_batch(self, sequences, conditionals=None):
+        batch_size = len(sequences)
+        sequence_inputs = torch.zeros(batch_size, self.sequence_length)
+        sequence_inputs[:, 0] = self.start_character
+        sequence_inputs[:, 1:] = torch.Tensor(sequences[:, :self.sequence_length - 1])
+        sequence_inputs = Variable(sequence_inputs).type(torch.LongTensor).cuda()
+        conditionals = Variable(torch.LongTensor(conditionals)).cuda()
+        targets = Variable(torch.Tensor(sequences)).type(torch.LongTensor).cuda()
+        return sequence_inputs, targets, conditionals
+
+    def pretrain_generator(self, sequence_train, epochs, batch_size, conditional_train=None):
+        for epoch in range(epochs):
+            idxs = np.random.randint(0, len(sequence_train), batch_size)
+            self.g_opt.zero_grad()
+
+            seq_x, targets, con_x = self.create_supervised_batch(sequence_train[idxs], conditional_train[idxs])
+            mle_loss = self.generator.train_mle(seq_x, targets, con_x)
+
+            mle_loss.backward()
+            self.g_opt.step()
+            print("Epoch [{}] MLE Loss: {}".format(epoch, mle_loss))
+
+    def pretrain_discriminator(self, sequence_train, epochs, batch_size, conditional_train=None):
+        if conditional_train is not None:
+            conditional_train = torch.LongTensor(conditional_train).cuda()
+        for epoch in range(epochs):
+            idxs = np.random.randint(0, len(sequence_train), batch_size)
+
+            # Get the data we're training on
+
+            fake_pretrain, _ = self.generator.sample(batch_size, conditional_train[idxs])
+            real_pretrain = Variable(torch.Tensor(sequence_train[idxs]).type(torch.LongTensor)).cuda()
+
+            # Generate predictions
+            for _input, _target in zip([real_pretrain, fake_pretrain],
+                                       [torch.ones(batch_size, 1).cuda(), torch.zeros(batch_size, 1).cuda()]):
+                if conditional_train is not None:
+                    pred = self.discriminator.predict_on_batch(_input, conditional_input=conditional_train[idxs])
+                else:
+                    pred = self.discriminator.predict_on_batch(_input)
+
+                # Backprop the loss
+                self.d_opt.zero_grad()
+                loss, accuracy = self.discriminator.loss(pred, _target)  # true shape = (batch_szie, 1)
+                loss.backward()
+                self.d_opt.step()
+                print("Epoch [{}] Discriminator Loss: {:.3f}, Accuracy: {:.3f}".format(epoch, loss, accuracy))
+            print('\n')
+
+    def calculate_rewards(self, sequence_input, conditional_input=None, n_rollouts=1):
+        if isinstance(sequence_input, (list, np.ndarray)):
+            sequence_input = torch.Tensor(sequence_input).type(torch.LongTensor).cuda()
+
+        rewards = torch.zeros(self.sequence_length, self.n_classes)
+        for timestep in range(self.sequence_length):
+            reward = 0
+            for n in range(n_rollouts):
+                rollout = self.generator.do_rollout(sequence_input[0, :timestep + 1], conditional_input)
+                reward += self.discriminator.predict_on_batch(rollout, conditional_input)
+            rewards[timestep, sequence_input.view(-1)[timestep]] = reward / n_rollouts
+        return rewards
+
+    def _adversarial_discriminator_update(self, sequence_train, batch_size, conditional_train=None):
+        valid = torch.ones((batch_size, 1)).cuda()
+        fake = torch.zeros((batch_size, 1)).cuda()
+        idxs = np.random.randint(0, len(sequence_train), batch_size)
+        real_samples = torch.Tensor(sequence_train[idxs]).type(torch.LongTensor).cuda()
+
+        if conditional_train is not None:
+            conditional_samples = conditional_train[idxs]
+            generated_samples, _ = self.generator.sample(batch_size=batch_size,
+                                                         conditional_input=conditional_samples)
+            d_pred_real = self.discriminator.predict_on_batch(generated_samples, conditional_samples,
+                                                              batch_size=batch_size)
+            d_pred_fake = self.discriminator.predict_on_batch(real_samples, conditional_samples,
+                                                              batch_size=batch_size)
+        else:
+            generated_samples, _ = self.generator.sample(batch_size=batch_size)
+            d_pred_real = self.discriminator.predict_on_batch(generated_samples, batch_size=batch_size)
+            d_pred_fake = self.discriminator.predict_on_batch(real_samples, batch_size=batch_size)
+
+        total_d_loss = 0
+        total_accuracy = 0
+        for _input, _target in zip([d_pred_real, d_pred_fake],
+                                   [valid, fake]):
+            self.d_opt.zero_grad()
+            d_loss, accuracy = self.discriminator.loss(_input, _target)
+            d_loss.backward()
+            self.d_opt.step()
+
+            total_d_loss += d_loss
+            total_accuracy += accuracy
+        return total_d_loss/2., total_accuracy/2.
+
+    def _adversarial_generator_update(self, conditional_train=None, n_rollouts=1):
+        # 1) Generate a sequence
+        if conditional_train is not None:
+            con_input = np.array([conditional_train])
+            generated_sequence, logits = self.generator.sample(1, con_input)
+        else:
+            generated_sequence, logits = self.generator.sample(1)
+            con_input = None
+
+        # 2) For each timestep, calculate the reward
+        rewards = self.calculate_rewards(generated_sequence, con_input, n_rollouts).unsqueeze(0)
+
+        # 3) Update generator
+        self.g_opt.zero_grad()
+        pg_loss = self.generator.pg_loss(logits, rewards)
+        pg_loss.backward()
+        self.g_opt.step()
+        return pg_loss
+
+    def evaluate_test_set(self, sequence_test, conditional_test=None, n_samples=1, epoch=1, out_dir=''):
+        # These are shape (n_samples * len(sequence_test), sequence_length)
+        generated_samples = np.zeros((len(sequence_test), self.sequence_length))
+        generated_scores = np.zeros((len(sequence_test), 1))
+        for i, con in enumerate(conditional_test):
+            _generated_samples, _ = self.generator.sample(n_samples, con.repeat(n_samples).reshape(-1, 1))
+            _generated_scores = self.discriminator.predict_on_batch(_generated_samples, con.repeat(n_samples).reshape(-1, 1))
+            generated_samples[i] = _generated_samples[_generated_scores.argmax()].detach().cpu().numpy()
+            generated_scores[i] = _generated_scores.max().detach().cpu().numpy()
+
+        # TODO: Use all the data to calculate r2 score and stuff - plot to_par and dk vs real, discriminator score vs error/sequence metric
+        # TODO: Grab one randomly and calculate reward. Output real, fake, rewards
+
+        generated_to_par = pd.DataFrame(generated_samples - 3)
+        generated_dk = generated_to_par.replace({-3: 20, -2: 8, -1: 3, 0: .5, 1: -.5, 2: -1})
+        test_to_par = pd.DataFrame(sequence_test - 3)
+        test_dk = test_to_par.replace({-3: 20, -2: 8, -1: 3, 0: .5, 1: -.5, 2: -1})
+
+        r2 = r2_score(test_to_par.sum(1), generated_to_par.sum(1))
+        dk_r2 = r2_score(test_dk.sum(1), generated_dk.sum(1))
+
+        print("R2/DK: {}/{}".format(r2, dk_r2))
+        sns.jointplot(generated_to_par.sum(1), test_to_par.sum(1))
+        plt.title('Epoch [{}] r2: {}'.format(epoch, r2))
+        plt.savefig('{}/pred_iter_{}.png'.format(out_dir, epoch))
+
+        sns.jointplot(generated_dk.sum(1), test_dk.sum(1))
+        plt.title('Epoch [{}] r2: {}'.format(epoch, r2))
+        plt.savefig('{}/dk_pred_iter_{}.png'.format(out_dir, epoch))
+
+        sample_reward = self.calculate_rewards(generated_samples[0].reshape(1, -1),
+                                               conditional_test[0].reshape(1, -1), 25).detach().cpu().numpy().squeeze().max(1)
+        out = pd.DataFrame({'fake': generated_to_par.loc[0, :], 'real': test_to_par.loc[0, :],
+                           'reward': sample_reward})
+        print(out)
+
+    def train_adversarial(self, sequence_train, epochs, batch_size, sequence_test, conditional_train=None,
+                          conditional_test=None, n_g_steps=1, n_rollouts=1, training_ratio=1, n_eval_samples=1, out_dir=''):
+        for epoch in range(epochs+1):
+            # Sample a batch of data
+            idxs = np.random.randint(0, len(sequence_train), n_g_steps)
+            # Train generator
+            for i, idx in enumerate(idxs):
+               pg_loss = self._adversarial_generator_update(conditional_train[idx], n_rollouts)
+               print("Epoch [{}], PG Loss: {}".format(epoch, pg_loss))
+
+            # 4) Generate sequences to train discriminator with
+            for _ in range(training_ratio):
+                d_loss, d_accuracy = self._adversarial_discriminator_update(sequence_train, batch_size, conditional_train)
+                print("%d [D loss: %f, accuracy: %f] [G loss: %f]" % (epoch, d_loss, d_accuracy, pg_loss))
+
+            # 5) Evaluate on test set
+            if epoch % 10 == 0:
+                self.evaluate_test_set(sequence_test, conditional_test, n_eval_samples, out_dir=out_dir, epoch=epoch)
