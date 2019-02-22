@@ -10,8 +10,10 @@ import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 from sklearn.metrics import r2_score, explained_variance_score
+from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 
 class Discriminator(nn.Module):
     def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, n_hidden=1,
@@ -48,12 +50,20 @@ class Discriminator(nn.Module):
             self.out = nn.Linear(kwargs['NUM_FILTERS'] * len(kwargs['WINDOW_SIZES']), 1)
         self.dropout_hidden_to_out = nn.Dropout(p=self.dropout)
 
-    def forward(self, sequence_input, hidden, conditional_input=None):
+    def forward(self, sequence_input, hidden, conditional_input=None, ret_emb=False):
         if self.conditional:
             if isinstance(conditional_input, (list, np.ndarray)):
-                conditional_input = torch.LongTensor(conditional_input).cuda()  #.unsqueeze(1)
+                conditional_input = torch.LongTensor(conditional_input).cuda()
 
         sequence_emb = self.sequence_embedding(sequence_input)
+        # if visualize:
+        #     cluster = TSNE().fit_transform(sequence_emb.view(sequence_emb.size()[0] * self.sequence_length, self.embedding_dim).detach().cpu().numpy())
+        #     scat = plt.scatter(cluster[:, 0], cluster[:, 1], c=sequence_input.view(sequence_emb.size()[0] * self.sequence_length).cpu().numpy())
+        #     plt.colorbar(scat)
+        #     plt.savefig('tmp.png')
+        # else:
+        #     scat = None
+
         if self.conditional:
             conditional_emb = self.conditional_embeddding(conditional_input)
             if self.conditional_type == 'continuous':
@@ -80,13 +90,15 @@ class Discriminator(nn.Module):
         out = self.dropout_hidden_to_out(out)
         out = self.out(out)
         out = torch.sigmoid(out)
+        if ret_emb:
+            return out, sequence_emb
         return out
 
     def init_hidden(self, batch_size=1):
         h = autograd.Variable(torch.zeros(self.n_hidden*2, batch_size, self.hidden_size))
         return h.cuda()
 
-    def predict_on_batch(self, sequence_input, conditional_input=None, batch_size=1):
+    def predict_on_batch(self, sequence_input, conditional_input=None, ret_emb=False):
         """
 
         :param sequence_input: autograd.Variable
@@ -96,9 +108,10 @@ class Discriminator(nn.Module):
         """
         h = self.init_hidden(sequence_input.size()[0])
         if self.conditional:
-            out = self.forward(sequence_input, h, conditional_input)
+            out = self.forward(sequence_input, h, conditional_input, ret_emb=ret_emb)
         else:
             out = self.forward(sequence_input, h)
+
         return out
 
     def loss(self, pred, true):
@@ -109,7 +122,7 @@ class Discriminator(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self, n_classes, conditional_data_size, embedding_dim, hidden_size, sequence_length, conditional=False,
-                 start_character=3, conditional_type='categorical', dropout=0.0):
+                 start_character=3, conditional_type='categorical', dropout=0.0, n_hidden=1):
         super(Generator, self).__init__()
         self.n_classes = n_classes
         self.conditional_data_size = conditional_data_size
@@ -120,6 +133,7 @@ class Generator(nn.Module):
         self.start_character = start_character
         self.conditional_type = conditional_type
         self.dropout = dropout
+        self.n_hidden = n_hidden
 
         self.sequence_embedding = nn.Embedding(self.n_classes, self.embedding_dim)
         if self.conditional:
@@ -127,12 +141,13 @@ class Generator(nn.Module):
                 self.conditional_embeddding = nn.Embedding(self.conditional_data_size, self.embedding_dim)
             elif self.conditional_type == 'continuous':
                 self.conditional_embeddding = nn.Linear(self.conditional_data_size, self.embedding_dim)
-        self.gru = nn.GRU(self.embedding_dim, self.hidden_size, batch_first=True)
+        # self.gru = nn.GRU(self.embedding_dim, self.hidden_size, batch_first=True)
+        self.gru = nn.GRU(self.embedding_dim, self.hidden_size, num_layers=self.n_hidden, batch_first=True)
         self.dropout_hidden_to_out = nn.Dropout(p=self.dropout)
         self.out = nn.Linear(self.hidden_size, self.n_classes)
 
     def init_hidden(self, batch_size=1):
-        h = autograd.Variable(torch.zeros(1, batch_size, self.hidden_size))
+        h = autograd.Variable(torch.zeros(self.n_hidden, batch_size, self.hidden_size))
         return h.cuda()
 
     def forward(self, sequence_input, hidden, conditional_input=None):
@@ -312,16 +327,13 @@ class SeqGAN:
 
         if conditional_train is not None:
             conditional_samples = conditional_train[idxs]
-            generated_samples, _ = self.generator.sample(batch_size=batch_size,
-                                                         conditional_input=conditional_samples)
-            d_pred_real = self.discriminator.predict_on_batch(generated_samples, conditional_samples,
-                                                              batch_size=batch_size)
-            d_pred_fake = self.discriminator.predict_on_batch(real_samples, conditional_samples,
-                                                              batch_size=batch_size)
+            generated_samples, _ = self.generator.sample(batch_size=batch_size, conditional_input=conditional_samples)
+            d_pred_fake = self.discriminator.predict_on_batch(generated_samples, conditional_samples)
+            d_pred_real = self.discriminator.predict_on_batch(real_samples, conditional_samples)
         else:
             generated_samples, _ = self.generator.sample(batch_size=batch_size)
-            d_pred_real = self.discriminator.predict_on_batch(generated_samples, batch_size=batch_size)
-            d_pred_fake = self.discriminator.predict_on_batch(real_samples, batch_size=batch_size)
+            d_pred_fake = self.discriminator.predict_on_batch(generated_samples)
+            d_pred_real = self.discriminator.predict_on_batch(real_samples)
 
         total_d_loss = 0
         total_accuracy = 0
@@ -361,12 +373,17 @@ class SeqGAN:
         generated_scores = np.zeros((len(sequence_test), 1))
         for i, con in enumerate(conditional_test):
             _generated_samples, _ = self.generator.sample(n_samples, con.repeat(n_samples).reshape(-1, 1))
-            _generated_scores = self.discriminator.predict_on_batch(_generated_samples, con.repeat(n_samples).reshape(-1, 1))
+            _generated_scores = self.discriminator.predict_on_batch(_generated_samples, con.repeat(n_samples).reshape(-1, 1), ret_emb=False)
             generated_samples[i] = _generated_samples[_generated_scores.argmax()].detach().cpu().numpy()
             generated_scores[i] = _generated_scores.max().detach().cpu().numpy()
 
-        # TODO: Use all the data to calculate r2 score and stuff - plot to_par and dk vs real, discriminator score vs error/sequence metric
-        # TODO: Grab one randomly and calculate reward. Output real, fake, rewards
+        # cluster = TSNE().fit_transform(_emb.view(_emb.size()[0] * self.sequence_length, self.discriminator.embedding_dim).detach().cpu().numpy())
+        # c = _generated_samples.view(_emb.size()[0] * self.sequence_length).cpu().numpy()
+        # fig, ax = plt.subplots(figsize=(17, 8))
+        # ax.scatter(cluster[:, 0], cluster[:, 1], c=c)
+        # plt.colorbar(fig)
+        # plt.savefig('{}/embedding_{}.png'.format(out_dir, epoch))
+        # plt.close()
 
         generated_to_par = pd.DataFrame(generated_samples - 3)
         generated_dk = generated_to_par.replace({-3: 20, -2: 8, -1: 3, 0: .5, 1: -.5, 2: -1})
@@ -389,6 +406,12 @@ class SeqGAN:
                                                conditional_test[0].reshape(1, -1), 25).detach().cpu().numpy().squeeze().max(1)
         out = pd.DataFrame({'fake': generated_to_par.loc[0, :], 'real': test_to_par.loc[0, :],
                            'reward': sample_reward})
+
+        fig, ax = plt.subplots(figsize=(17, 8))
+        sns.distplot(generated_scores, ax=ax)
+        plt.title("Epoch [{}] discriminator predictions".format(epoch))
+        plt.savefig('{}/disc_pred_{}.png'.format(out_dir, epoch))
+        plt.close()
         print(out)
 
     def train_adversarial(self, sequence_train, epochs, batch_size, sequence_test, conditional_train=None,
@@ -407,5 +430,5 @@ class SeqGAN:
                 print("%d [D loss: %f, accuracy: %f] [G loss: %f]" % (epoch, d_loss, d_accuracy, pg_loss))
 
             # 5) Evaluate on test set
-            if epoch % 10 == 0:
+            if epoch % 5 == 0:
                 self.evaluate_test_set(sequence_test, conditional_test, n_eval_samples, out_dir=out_dir, epoch=epoch)
